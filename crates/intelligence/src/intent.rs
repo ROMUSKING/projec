@@ -6,23 +6,90 @@ use common::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Rule for intent classification
+struct IntentRule {
+    category: super::IntentCategory,
+    keywords: Vec<(&'static str, f32)>,
+}
+
 /// Intent parser for natural language understanding
 pub struct IntentParser {
-    // TODO: Add NLP model or rule-based classifier
+    rules: Vec<IntentRule>,
+    // Compiled regexes
+    file_pattern: regex::Regex,
+    code_pattern: regex::Regex,
+    fn_pattern: regex::Regex,
+    var_pattern: regex::Regex,
+    decompose_pattern: regex::Regex,
 }
 
 impl IntentParser {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            rules: vec![
+                IntentRule {
+                    category: super::IntentCategory::CodeGeneration,
+                    keywords: vec![
+                        ("create", 1.0), ("generate", 1.0), ("new", 0.8), ("write", 0.9),
+                        ("implement", 1.0), ("build", 0.8), ("add", 0.6)
+                    ],
+                },
+                IntentRule {
+                    category: super::IntentCategory::CodeModification,
+                    keywords: vec![
+                        ("modify", 1.0), ("change", 1.0), ("update", 1.0), ("refactor", 1.0),
+                        ("fix", 1.0), ("edit", 0.8), ("improve", 0.5), ("optimize", 0.5)
+                    ],
+                },
+                IntentRule {
+                    category: super::IntentCategory::Analysis,
+                    keywords: vec![
+                        ("analyze", 1.0), ("understand", 1.0), ("explain", 1.0), ("check", 0.8),
+                        ("review", 0.9), ("scan", 0.7), ("audit", 0.9)
+                    ],
+                },
+                IntentRule {
+                    category: super::IntentCategory::Testing,
+                    keywords: vec![
+                        ("test", 1.0), ("testing", 1.0), ("verify", 0.9), ("benchmark", 0.9),
+                        ("coverage", 0.8)
+                    ],
+                },
+                IntentRule {
+                    category: super::IntentCategory::Documentation,
+                    keywords: vec![
+                        ("document", 1.0), ("documentation", 1.0), ("doc", 0.9), ("comment", 0.8),
+                        ("describe", 0.7)
+                    ],
+                },
+                IntentRule {
+                    category: super::IntentCategory::Optimization,
+                    keywords: vec![
+                        ("optimize", 1.0), ("performance", 1.0), ("improve", 0.8), ("speed", 0.7),
+                        ("fast", 0.6), ("efficient", 0.8)
+                    ],
+                },
+                IntentRule {
+                    category: super::IntentCategory::SelfImprovement,
+                    keywords: vec![
+                        ("self improve", 1.0), ("improve yourself", 1.0), ("learn", 0.8), ("self", 0.5)
+                    ],
+                },
+            ],
+            file_pattern: regex::Regex::new(r"`([^`]+\.(rs|toml|json|md|txt|yml|yaml))`").unwrap(),
+            code_pattern: regex::Regex::new(r"```(\w+)?\n(.*?)```").unwrap(),
+            fn_pattern: regex::Regex::new(r"fn\s+([a-zA-Z_][a-zA-Z0-9_]*)").unwrap(),
+            var_pattern: regex::Regex::new(r"(?:let|const)\s+([a-zA-Z_][a-zA-Z0-9_]*)").unwrap(),
+            decompose_pattern: regex::Regex::new(r"(?i)\s+(?:and|then)\s+|;\s+|\.\s+").unwrap(),
+        }
     }
 
     /// Parse user input into structured intent
     pub async fn parse(&self, input: &str) -> Result<super::Intent> {
-        // TODO: Implement actual NLP parsing
-        // For now, use simple keyword matching
-        let category = self.classify_intent(input);
+        // TODO: Implement actual NLP parsing (e.g. LLM based)
+        // For now, use weighted keyword matching
+        let (category, confidence) = self.classify_intent(input);
         let parameters = self.extract_parameters(input);
-        let confidence = 0.8; // Placeholder
 
         Ok(super::Intent {
             category,
@@ -32,25 +99,45 @@ impl IntentParser {
         })
     }
 
-    fn classify_intent(&self, input: &str) -> super::IntentCategory {
-        let input_lower = input.to_lowercase();
+    /// Decompose a complex task into sub-tasks
+    pub async fn decompose(&self, input: &str) -> Result<Vec<super::Intent>> {
+        let mut intents = Vec::new();
 
-        if input_lower.contains("create") || input_lower.contains("generate") || input_lower.contains("new") {
-            super::IntentCategory::CodeGeneration
-        } else if input_lower.contains("modify") || input_lower.contains("change") || input_lower.contains("update") || input_lower.contains("refactor") {
-            super::IntentCategory::CodeModification
-        } else if input_lower.contains("analyze") || input_lower.contains("understand") || input_lower.contains("explain") {
-            super::IntentCategory::Analysis
-        } else if input_lower.contains("test") || input_lower.contains("testing") {
-            super::IntentCategory::Testing
-        } else if input_lower.contains("document") || input_lower.contains("doc") {
-            super::IntentCategory::Documentation
-        } else if input_lower.contains("optimize") || input_lower.contains("performance") || input_lower.contains("improve") {
-            super::IntentCategory::Optimization
-        } else if input_lower.contains("improve yourself") || input_lower.contains("learn") || input_lower.contains("self") {
-            super::IntentCategory::SelfImprovement
+        let parts: Vec<&str> = self.decompose_pattern.split(input).filter(|s| !s.trim().is_empty()).collect();
+
+        for part in parts {
+            intents.push(self.parse(part).await?);
+        }
+
+        Ok(intents)
+    }
+
+    fn classify_intent(&self, input: &str) -> (super::IntentCategory, f32) {
+        let input_lower = input.to_lowercase();
+        let mut best_category = super::IntentCategory::Unknown;
+        let mut max_score = 0.0;
+
+        for rule in &self.rules {
+            let mut score = 0.0;
+            for (keyword, weight) in &rule.keywords {
+                if input_lower.contains(keyword) {
+                    score += weight;
+                }
+            }
+
+            if score > max_score {
+                max_score = score;
+                best_category = rule.category;
+            }
+        }
+
+        // Normalize score to 0.0 - 1.0 range based on a heuristic max score (e.g., 3.0)
+        let confidence = (max_score / 3.0).min(1.0);
+
+        if max_score > 0.0 {
+            (best_category, confidence)
         } else {
-            super::IntentCategory::Unknown
+            (super::IntentCategory::Unknown, 0.0)
         }
     }
 
@@ -58,8 +145,7 @@ impl IntentParser {
         let mut params = HashMap::new();
 
         // Extract file paths
-        let file_pattern = regex::Regex::new(r"`([^`]+\.(rs|toml|json|md))`").unwrap();
-        let files: Vec<String> = file_pattern
+        let files: Vec<String> = self.file_pattern
             .captures_iter(input)
             .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
             .collect();
@@ -69,14 +155,33 @@ impl IntentParser {
         }
 
         // Extract code blocks
-        let code_pattern = regex::Regex::new(r"```(\w+)?\n(.*?)```").unwrap();
-        let code_blocks: Vec<String> = code_pattern
+        let code_blocks: Vec<String> = self.code_pattern
             .captures_iter(input)
             .filter_map(|cap| cap.get(2).map(|m| m.as_str().to_string()))
             .collect();
 
         if !code_blocks.is_empty() {
             params.insert("code_blocks".to_string(), serde_json::json!(code_blocks));
+        }
+
+        // Extract function names: fn <name>
+        let functions: Vec<String> = self.fn_pattern
+            .captures_iter(input)
+            .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
+            .collect();
+
+        if !functions.is_empty() {
+            params.insert("functions".to_string(), serde_json::json!(functions));
+        }
+
+        // Extract variable names: let <name> or const <name>
+        let variables: Vec<String> = self.var_pattern
+            .captures_iter(input)
+            .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
+            .collect();
+
+        if !variables.is_empty() {
+            params.insert("variables".to_string(), serde_json::json!(variables));
         }
 
         params
@@ -141,5 +246,56 @@ mod tests {
 
         let intent = parser.parse("Analyze the codebase").await.unwrap();
         assert_eq!(intent.category, super::super::IntentCategory::Analysis);
+    }
+
+    #[tokio::test]
+    async fn test_weighted_scoring() {
+        let parser = IntentParser::new();
+
+        // "create" (1.0) + "new" (0.8) = 1.8 score
+        let intent = parser.parse("create new file").await.unwrap();
+        assert_eq!(intent.category, super::super::IntentCategory::CodeGeneration);
+        assert!(intent.confidence > 0.5);
+    }
+
+    #[tokio::test]
+    async fn test_parameter_extraction() {
+        let parser = IntentParser::new();
+
+        let input = "Check function fn process_data and variable let result";
+        let intent = parser.parse(input).await.unwrap();
+
+        let functions = intent.parameters.get("functions").unwrap().as_array().unwrap();
+        assert_eq!(functions[0].as_str().unwrap(), "process_data");
+
+        let variables = intent.parameters.get("variables").unwrap().as_array().unwrap();
+        assert_eq!(variables[0].as_str().unwrap(), "result");
+    }
+
+    #[tokio::test]
+    async fn test_decompose() {
+        let parser = IntentParser::new();
+
+        let input = "Create a new function and then test it";
+        let intents = parser.decompose(input).await.unwrap();
+
+        assert_eq!(intents.len(), 2);
+        assert_eq!(intents[0].category, super::super::IntentCategory::CodeGeneration);
+        assert_eq!(intents[1].category, super::super::IntentCategory::Testing);
+    }
+
+    #[tokio::test]
+    async fn test_empty_input() {
+        let parser = IntentParser::new();
+        let intent = parser.parse("").await.unwrap();
+        assert_eq!(intent.category, super::super::IntentCategory::Unknown);
+        assert_eq!(intent.confidence, 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_unknown_intent() {
+        let parser = IntentParser::new();
+        let intent = parser.parse("blabla 1234").await.unwrap();
+        assert_eq!(intent.category, super::super::IntentCategory::Unknown);
     }
 }
