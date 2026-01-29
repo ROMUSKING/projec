@@ -7,8 +7,8 @@ use common::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// Main configuration structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Main configuration structure (sensitive fields are redacted in debug output)
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     /// Agent identity
     pub agent: AgentSettings,
@@ -30,6 +30,100 @@ pub struct AgentConfig {
 
     /// Telemetry and survey configuration
     pub telemetry: TelemetryConfig,
+}
+
+impl std::fmt::Debug for AgentConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentConfig")
+            .field("agent", &self.agent)
+            .field("llm", &DebugRedactedLlmConfig(&self.llm))
+            .field("lsp", &self.lsp)
+            .field("safety", &self.safety)
+            .field("tools", &self.tools)
+            .field("self_compile", &self.self_compile)
+            .field("telemetry", &DebugRedactedTelemetryConfig(&self.telemetry))
+            .finish()
+    }
+}
+
+/// Wrapper to redact API keys in LlmConfig debug output
+struct DebugRedactedLlmConfig<'a>(&'a LlmConfig);
+
+impl<'a> std::fmt::Debug for DebugRedactedLlmConfig<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut lsp = f.debug_struct("LlmConfig");
+        lsp
+            .field("provider", &self.0.provider)
+            .field("model", &self.0.model)
+            .field("temperature", &self.0.temperature)
+            .field("max_tokens", &self.0.max_tokens)
+            .field("providers", &DebugRedactedLlmProviders(&self.0.providers));
+        
+        lsp.finish()
+    }
+}
+
+/// Wrapper to redact API keys in LlmProviders debug output
+struct DebugRedactedLlmProviders<'a>(&'a ProviderConfigs);
+
+impl<'a> std::fmt::Debug for DebugRedactedLlmProviders<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut providers = f.debug_struct("LlmProviders");
+        
+        // Redact API keys
+        providers
+            .field("anthropic", &DebugRedactedApiKeyConfig(&self.0.anthropic))
+            .field("openai", &DebugRedactedApiKeyConfig(&self.0.openai))
+            .field("ollama", &DebugRedactedApiKeyConfig(&self.0.ollama))
+            .field("gemini", &DebugRedactedApiKeyConfig(&self.0.gemini))
+            .field("groq", &DebugRedactedApiKeyConfig(&self.0.groq))
+            .field("azure", &DebugRedactedApiKeyConfig(&self.0.azure))
+            .field("cohere", &DebugRedactedApiKeyConfig(&self.0.cohere))
+            .field("mistral", &DebugRedactedApiKeyConfig(&self.0.mistral))
+            .field("openrouter", &DebugRedactedApiKeyConfig(&self.0.openrouter))
+            .field("together", &DebugRedactedApiKeyConfig(&self.0.together))
+            .field("huggingface", &DebugRedactedApiKeyConfig(&self.0.huggingface))
+            .field("deepseek", &DebugRedactedApiKeyConfig(&self.0.deepseek))
+            .field("perplexity", &DebugRedactedApiKeyConfig(&self.0.perplexity))
+            .field("ai21", &DebugRedactedApiKeyConfig(&self.0.ai21));
+        
+        providers.finish()
+    }
+}
+
+/// Wrapper to redact single API key in debug output
+struct DebugRedactedApiKeyConfig<'a>(&'a ProviderConfig);
+
+impl<'a> std::fmt::Debug for DebugRedactedApiKeyConfig<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut config = f.debug_struct("ProviderConfig");
+        
+        config
+            .field("api_key", &"<REDACTED>")
+            .field("base_url", &self.0.base_url);
+        
+        config.finish()
+    }
+}
+
+/// Wrapper to redact telemetry API key in debug output
+struct DebugRedactedTelemetryConfig<'a>(&'a TelemetryConfig);
+
+impl<'a> std::fmt::Debug for DebugRedactedTelemetryConfig<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut telemetry = f.debug_struct("TelemetryConfig");
+        
+        telemetry
+            .field("enabled", &self.0.enabled)
+            .field("surveys_enabled", &self.0.surveys_enabled)
+            .field("anonymize", &self.0.anonymize)
+            .field("encryption_standard", &self.0.encryption_standard)
+            .field("storage_path", &self.0.storage_path)
+            .field("central_server_url", &self.0.central_server_url)
+            .field("telemetry_api_key", &self.0.telemetry_api_key.as_ref().map(|_| "<REDACTED>"));
+        
+        telemetry.finish()
+    }
 }
 
 impl Default for AgentConfig {

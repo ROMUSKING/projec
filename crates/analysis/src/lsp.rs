@@ -89,8 +89,16 @@ impl LspManager {
         Ok(())
     }
 
-    /// Check if a language server command is available
+    /// Check if a language server command is available (safe version)
     async fn is_server_available(&self, command: &str) -> bool {
+        // Only allow known safe commands
+        let allowed_commands = ["rust-analyzer", "typescript-language-server"];
+        
+        if !allowed_commands.contains(&command) {
+            warn!("Attempted to check availability of disallowed language server command: {}", command);
+            return false;
+        }
+        
         Command::new("which")
             .arg(command)
             .output()
@@ -99,8 +107,36 @@ impl LspManager {
             .unwrap_or(false)
     }
 
-    /// Start a language server with the given configuration
+    /// Validate language server configuration (prevents command injection)
+    fn validate_server_config(&self, config: &LanguageServerConfig) -> Result<()> {
+        // Only allow known safe commands
+        let allowed_commands = ["rust-analyzer", "typescript-language-server"];
+        
+        if !allowed_commands.contains(&config.command.as_str()) {
+            return Err(Error::Validation(format!(
+                "Disallowed language server command: {}",
+                config.command
+            )));
+        }
+        
+        // Validate command arguments (no malicious content)
+        for arg in &config.args {
+            if arg.contains(';') || arg.contains('|') || arg.contains('&') || arg.contains('`') {
+                return Err(Error::Validation(format!(
+                    "Potentially malicious command argument: {}",
+                    arg
+                )));
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Start a language server with the given configuration (safe version)
     pub async fn start_server(&self, config: LanguageServerConfig) -> Result<()> {
+        // Validate server configuration before starting
+        self.validate_server_config(&config)?;
+        
         let server = LanguageServerInstance::new(config.clone(), self.document_cache.clone()).await?;
         let server_arc = Arc::new(server);
         

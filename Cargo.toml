@@ -95,8 +95,8 @@ qdrant-client = "1.7"
 # Knowledge graph
 neo4rs = "0.7"
 
-# Database
-sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite"] }
+ # Database
+ sqlx = { version = "0.8.1", features = ["runtime-tokio", "sqlite"] }
 
 # Configuration
 config = "0.14"

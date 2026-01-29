@@ -67,11 +67,25 @@ impl PromptTemplate {
     pub fn render(&self, context: &super::Context) -> String {
         let mut result = self.template.clone();
 
-        // Replace context variables
-        result = result.replace("{{code_context}}", &format!("{:?}", context.code_context));
-        result = result.replace("{{knowledge_context}}", &format!("{:?}", context.knowledge_context));
-        result = result.replace("{{execution_context}}", &format!("{:?}", context.execution_context));
-        result = result.replace("{{system_context}}", &format!("{:?}", context.system_context));
+        // Sanitize and replace context variables to prevent prompt injection
+        let sanitize = |input: &str| {
+            // Escape special characters that could be used for injection
+            input
+                .replace('{', "{{'{'}}")
+                .replace('}', "{{'}'}}")
+                .replace('|', "{{'|'}}")
+                .replace('[', "{{'['}}")
+                .replace(']', "{{']'}}")
+                .replace('`', "{{'`'}}")
+                .replace('"', r#"{{'"'}}#)
+                .replace('\'', r#"{{'\''}}"#)
+        };
+
+        // Replace context variables with sanitized content
+        result = result.replace("{{code_context}}", &sanitize(&format!("{:?}", context.code_context)));
+        result = result.replace("{{knowledge_context}}", &sanitize(&format!("{:?}", context.knowledge_context)));
+        result = result.replace("{{execution_context}}", &sanitize(&format!("{:?}", context.execution_context)));
+        result = result.replace("{{system_context}}", &sanitize(&format!("{:?}", context.system_context)));
 
         result
     }

@@ -6,6 +6,7 @@ use super::{Parameter, ParameterType, ReturnType, Tool};
 use common::{async_trait, Error, Result};
 use serde_json::Value;
 use std::collections::HashMap;
+use tracing::warn;
 
 /// HTTP tool
 pub struct HttpTool;
@@ -117,24 +118,49 @@ impl Tool for HttpTool {
     }
 
     fn is_safe(&self, args: &Value) -> bool {
-        // Check URL against allowlist
+        // Strict URL validation to prevent SSRF
         if let Some(url) = args.get("url").and_then(|v| v.as_str()) {
+            // Only allow HTTPS for external APIs (prevents MITM attacks)
+            if !url.starts_with("https://") && !url.starts_with("http://localhost") && !url.starts_with("http://127.0.0.1") {
+                warn!("Attempted to use insecure HTTP protocol: {}", url);
+                return false;
+            }
+
+            // Allow only specific domains
             let allowed_domains = [
                 "api.openai.com",
                 "api.anthropic.com",
                 "localhost",
                 "127.0.0.1",
             ];
-
-            // Simple domain check
+            
+            let mut is_allowed = false;
             for domain in &allowed_domains {
                 if url.contains(domain) {
-                    return true;
+                    is_allowed = true;
+                    break;
                 }
             }
+            
+            if !is_allowed {
+                warn!("Attempted to access disallowed domain: {}", url);
+                return false;
+            }
 
-            // Block internal/private IPs
-            if url.contains("192.168.") || url.contains("10.") || url.contains("172.") {
+            // Block internal/private IP ranges (RFC1918)
+            if url.contains("192.168.") || url.contains("10.") || url.contains("172.16.") 
+                || url.contains("172.17.") || url.contains("172.18.") || url.contains("172.19.")
+                || url.contains("172.20.") || url.contains("172.21.") || url.contains("172.22.")
+                || url.contains("172.23.") || url.contains("172.24.") || url.contains("172.25.")
+                || url.contains("172.26.") || url.contains("172.27.") || url.contains("172.28.")
+                || url.contains("172.29.") || url.contains("172.30.") || url.contains("172.31.") {
+                warn!("Attempted to access internal/private IP range: {}", url);
+                return false;
+            }
+
+            // Block loopback addresses (other than 127.0.0.1)
+            if url.contains("::1") {
+                warn!("Attempted to access IPv6 loopback address: {}", url);
                 return false;
             }
         }

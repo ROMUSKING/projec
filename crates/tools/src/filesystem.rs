@@ -126,13 +126,25 @@ impl Tool for FileSystemTool {
     }
 
     fn is_safe(&self, args: &Value) -> bool {
-        // Check for forbidden paths
+        // Check for forbidden paths and validate paths to prevent traversal
         if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
             let forbidden = ["/etc/passwd", "/etc/shadow", ".ssh/id_rsa"];
             for f in &forbidden {
                 if path.contains(f) {
                     return false;
                 }
+            }
+
+            // Prevent path traversal
+            if path.contains("../") || path.starts_with("/") {
+                warn!("Attempted path traversal or absolute path access: {}", path);
+                return false;
+            }
+
+            // Check for null bytes
+            if path.contains('\0') {
+                warn!("Attempted path with null byte: {}", path);
+                return false;
             }
         }
         true

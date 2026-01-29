@@ -11,12 +11,25 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use rand::RngCore;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use zeroize::Zeroize;
 
 /// Encryption manager handles key management and crypto operations
 pub struct CryptoManager {
     // In a real system, keys would be rotated and securely stored
     // For this CLI, we generate a session key or load from config
     key: Key<Aes256Gcm>,
+}
+
+impl Drop for CryptoManager {
+    fn drop(&mut self) {
+        // Zeroize the key to prevent it from being left in memory
+        // Convert key to mutable by taking ownership or using interior mutability
+        let key_ptr = &mut self.key as *mut Key<Aes256Gcm>;
+        unsafe {
+            let key_bytes = std::slice::from_raw_parts_mut(key_ptr as *mut u8, 32);
+            key_bytes.zeroize();
+        }
+    }
 }
 
 impl CryptoManager {
