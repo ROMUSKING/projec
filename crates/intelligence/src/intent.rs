@@ -77,7 +77,8 @@ impl IntentParser {
                 },
             ],
             file_pattern: regex::Regex::new(r"`([^`]+\.(rs|toml|json|md|txt|yml|yaml))`").unwrap(),
-            code_pattern: regex::Regex::new(r"```(\w+)?\n(.*?)```").unwrap(),
+            // Use (?s) to allow . to match newlines for multi-line code blocks
+            code_pattern: regex::Regex::new(r"(?s)```(\w+)?\n(.*?)```").unwrap(),
             fn_pattern: regex::Regex::new(r"fn\s+([a-zA-Z_][a-zA-Z0-9_]*)").unwrap(),
             var_pattern: regex::Regex::new(r"(?:let|const)\s+([a-zA-Z_][a-zA-Z0-9_]*)").unwrap(),
             decompose_pattern: regex::Regex::new(r"(?i)\s+(?:and|then)\s+|;\s+|\.\s+").unwrap(),

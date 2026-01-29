@@ -10,7 +10,15 @@ use tokio::io::AsyncBufReadExt;
 use tracing::warn;
 
 /// File system tool
-pub struct FileSystemTool;
+pub struct FileSystemTool {
+    max_file_size: u64,
+}
+
+impl FileSystemTool {
+    pub fn new(max_file_size: u64) -> Self {
+        Self { max_file_size }
+    }
+}
 
 #[async_trait]
 impl Tool for FileSystemTool {
@@ -135,13 +143,12 @@ impl FileSystemTool {
     async fn read_file(&self, path: &str) -> Result<Value> {
         // Safety: Check file size before reading to prevent OOM
         let metadata = tokio::fs::metadata(path).await?;
-        const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB limit
 
-        if metadata.len() > MAX_FILE_SIZE {
+        if metadata.len() > self.max_file_size {
             return Err(Error::Validation(format!(
                 "File too large to read: {} bytes (max {} bytes)",
                 metadata.len(),
-                MAX_FILE_SIZE
+                self.max_file_size
             )));
         }
 
@@ -233,7 +240,7 @@ impl FileSystemTool {
                                     matches.push(serde_json::json!({
                                         "path": entry.path().to_string_lossy().to_string(),
                                         "line": line_num,
-                                        "content": line,
+                                        "content": line.trim(),
                                     }));
                                 }
                             }
@@ -271,11 +278,12 @@ mod tests {
         // We write lines to test line iteration
         let chunk = "a".repeat(1024);
         for _ in 0..10240 {
-             writeln!(temp_file, "{}", chunk).unwrap();
+            writeln!(temp_file, "{}", chunk).unwrap();
         }
         writeln!(temp_file, "needle").unwrap();
+        temp_file.flush().unwrap();
 
-        let tool = FileSystemTool;
+        let tool = FileSystemTool::new(10 * 1024 * 1024);
 
         // Search specifically in this file (WalkDir handles file paths too)
         let result = tool.search_files(path_str, "needle").await.unwrap();
@@ -283,8 +291,34 @@ mod tests {
 
         assert!(!matches.is_empty(), "Should find matches");
         let found = matches.iter().any(|m| {
-             m["content"].as_str().unwrap() == "needle"
+            m["content"].as_str().unwrap() == "needle"
         });
         assert!(found, "Should find 'needle' in large file");
+    }
+
+    #[tokio::test]
+    async fn test_read_file_limit() {
+        // Create a temporary file larger than 10MB
+        let mut temp_file = tempfile::NamedTempFile::new().unwrap();
+        let path = temp_file.path().to_owned();
+        let path_str = path.to_str().unwrap();
+
+        // Write 10MB + 1 byte
+        let chunk = "a".repeat(1024);
+        for _ in 0..10241 {
+            writeln!(temp_file, "{}", chunk).unwrap();
+        }
+        temp_file.flush().unwrap();
+
+        let tool = FileSystemTool::new(10 * 1024 * 1024);
+        let result = tool.read_file(path_str).await;
+
+        assert!(result.is_err());
+        match result {
+            Err(Error::Validation(msg)) => {
+                assert!(msg.contains("File too large"));
+            }
+            _ => panic!("Expected Validation error"),
+        }
     }
 }
