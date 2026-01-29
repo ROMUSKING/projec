@@ -133,6 +133,18 @@ impl Tool for FileSystemTool {
 
 impl FileSystemTool {
     async fn read_file(&self, path: &str) -> Result<Value> {
+        // Safety: Check file size before reading to prevent OOM
+        let metadata = tokio::fs::metadata(path).await?;
+        const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB limit
+
+        if metadata.len() > MAX_FILE_SIZE {
+            return Err(Error::Validation(format!(
+                "File too large to read: {} bytes (max {} bytes)",
+                metadata.len(),
+                MAX_FILE_SIZE
+            )));
+        }
+
         let content = tokio::fs::read_to_string(path).await?;
         Ok(serde_json::json!({
             "success": true,
