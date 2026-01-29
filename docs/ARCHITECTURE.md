@@ -893,6 +893,18 @@ graph TB
 - Export capabilities
 - Retention policies
 
+### Security Audit
+
+A comprehensive security audit has been completed for the entire codebase. The audit identified several critical and high-severity vulnerabilities that require immediate attention. Key findings include:
+
+1. **SQL Injection Vulnerability**: SQLx version 0.7.4 has a known vulnerability (RUSTSEC-2024-0363)
+2. **RSA Timing Side-Channel Vulnerability**: rsa crate version 0.9.10 is vulnerable to the Marvin Attack (RUSTSEC-2023-0071)
+3. **Crypto Key Management Issue**: AES-256-GCM keys are not properly persisted or rotated
+4. **Insecure Prompt Rendering**: Direct string replacement without sanitization creates prompt injection risks
+5. **Unmaintained Dependencies**: Multiple dependencies are marked as unmaintained
+
+For detailed information on all vulnerabilities and recommended fixes, please see the [SECURITY_AUDIT.md](../SECURITY_AUDIT.md) report.
+
 ---
 
 ## Deployment & Operations

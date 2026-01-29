@@ -22,9 +22,19 @@ The main agent struct that orchestrates all operations.
 
 ```rust
 pub struct Agent {
-    config: AgentConfig,
-    orchestrator: Orchestrator,
-    // ... other fields
+    orchestrator: Arc<RwLock<Orchestrator>>,
+    state_manager: Arc<RwLock<StateManager>>,
+    improvement_engine: Arc<RwLock<ImprovementEngine>>,
+    evaluation_engine: Arc<RwLock<EvaluationEngine>>,
+    telemetry_manager: Arc<RwLock<TelemetryManager>>,
+    self_compiler: Option<Arc<RwLock<SelfCompiler>>>,
+    task_queue: TaskQueue,
+    metrics: Arc<RwLock<AgentMetrics>>,
+    modules: Vec<Box<dyn Module>>,
+    config: agent_config::AgentConfig,
+    shutdown_tx: Option<mpsc::Sender<()>>,
+    event_tx: mpsc::Sender<AgentEvent>,
+    event_rx: Arc<RwLock<mpsc::Receiver<AgentEvent>>>,
 }
 ```
 
@@ -35,18 +45,60 @@ pub struct Agent {
 Creates a new agent with the given configuration.
 
 ```rust
-pub fn new(config: AgentConfig) -> Self
+pub fn new(config: agent_config::AgentConfig) -> Self
 ```
 
 **Parameters**:
-- `config`: Agent configuration
+- `config`: Agent configuration (from `agent_config` module)
 
 **Returns**: A new `Agent` instance
 
 **Example**:
 ```rust
-let config = AgentConfig::default();
+let config = agent_config::AgentConfig::default();
 let agent = Agent::new(config);
+```
+
+---
+
+##### `register_module`
+
+Registers a module with the agent.
+
+```rust
+pub fn register_module(&mut self, module: Box<dyn Module>)
+```
+
+**Parameters**:
+- `module`: Module to register (must implement `Module` trait)
+
+**Example**:
+```rust
+let mut agent = Agent::new(config);
+let module = Box::new(MyCustomModule::new());
+agent.register_module(module);
+```
+
+---
+
+##### `with_orchestrator`
+
+Sets a custom orchestrator for the agent (fluent API).
+
+```rust
+pub fn with_orchestrator(mut self, mut orchestrator: Orchestrator) -> Self
+```
+
+**Parameters**:
+- `orchestrator`: Custom orchestrator instance
+
+**Returns**: Self for method chaining
+
+**Example**:
+```rust
+let orchestrator = Orchestrator::new();
+let agent = Agent::new(config)
+    .with_orchestrator(orchestrator);
 ```
 
 ---

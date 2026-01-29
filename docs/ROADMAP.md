@@ -989,6 +989,10 @@ Phase 5 (Advanced Features)
 | LSP server instability | Medium | Medium | Implement connection pooling, retry logic |
 | Vector store performance | Medium | Low | Implement indexing, approximate search |
 | Self-modification bugs | High | Low | Strict validation, human approval, rollback |
+| SQL injection (SQLx) | High | High | Upgrade SQLx to 0.8.1+, parameterized queries |
+| RSA timing attack | High | Medium | Replace RSA implementation, constant-time algorithms |
+| Prompt injection | High | High | Implement prompt sanitization, parameter validation |
+| Unmaintained dependencies | Medium | High | Replace with active alternatives, regular updates |
 
 ### Schedule Risks
 
@@ -1013,9 +1017,10 @@ Phase 5 (Advanced Features)
 
 - [ ] All 5 phases completed
 - [ ] 90%+ test coverage
-- [ ] Zero critical security vulnerabilities
+- [ ] Zero critical security vulnerabilities (all audit findings addressed)
 - [ ] Performance benchmarks met
 - [ ] Community adoption and contributions
+- [ ] Security audit report reviewed and all high/medium severity issues fixed
 
 ### Phase 1 Success
 - [ ] All stub modules implemented
@@ -1061,4 +1066,5 @@ Phase 5 (Advanced Features)
 For more information, see:
 - [Architecture Documentation](ARCHITECTURE.md)
 - [Development Guide](DEVELOPMENT.md)
+- [Security Audit Report](../SECURITY_AUDIT.md)
 - [Project README](../README.md)

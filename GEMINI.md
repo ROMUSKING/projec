@@ -62,3 +62,4 @@ This project uses the standard Rust toolchain.
 *   **Modularity**: Functionality is organized into separate crates. When adding new features, consider which crate is the most appropriate home or if a new crate is necessary.
 *   **Extensibility**: The agent is designed to be extensible. New tools can be added by implementing the `Tool` trait and registering them with the tool framework.
 *   **Logging and Tracing**: The project uses the `tracing` crate for structured logging. Familiarize yourself with the different log levels and how to enable them for debugging.
+*   **Security**: A comprehensive security audit has been completed. See [SECURITY_AUDIT.md](SECURITY_AUDIT.md) for details on vulnerabilities and recommended fixes.

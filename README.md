@@ -64,6 +64,7 @@ The Self-Developing Coding Agent is an autonomous software development assistant
 - **Audit Logging**: Comprehensive logging of all actions and modifications
 - **Validation Layers**: Static analysis, runtime guards, and output validation
 - **Recovery System**: Automatic rollback on failure with checkpoint restoration
+- **Security Audit**: A comprehensive security audit has been completed. See [SECURITY_AUDIT.md](SECURITY_AUDIT.md) for details.
 
 ## Architecture
 

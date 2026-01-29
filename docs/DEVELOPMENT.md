@@ -342,6 +342,16 @@ cargo clippy -- -D warnings
 cargo audit
 ```
 
+#### Security Audit
+
+A comprehensive security audit has been completed. Developers should review the [SECURITY_AUDIT.md](../SECURITY_AUDIT.md) report for:
+- Critical and high-severity vulnerabilities
+- Recommended fixes and remediation steps
+- Security improvement checklist
+- Dependency vulnerability information
+
+All new code should address the security findings from the audit.
+
 #### Check for Outdated Dependencies
 
 ```bash
