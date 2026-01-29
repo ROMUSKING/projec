@@ -6,6 +6,7 @@ use super::{Parameter, ParameterType, ReturnType, Tool};
 use common::{async_trait, Error, Result};
 use serde_json::Value;
 use tokio::io::AsyncBufReadExt;
+use tracing::warn;
 
 /// Search tool
 pub struct SearchTool;
@@ -149,14 +150,23 @@ impl SearchTool {
                 let mut lines = reader.lines();
                 let mut line_num = 0;
 
-                while let Ok(Some(line)) = lines.next_line().await {
-                    line_num += 1;
-                    if regex.is_match(&line) {
-                        matches.push(serde_json::json!({
-                            "path": entry.path().to_string_lossy().to_string(),
-                            "line": line_num,
-                            "content": line.trim(),
-                        }));
+                loop {
+                    match lines.next_line().await {
+                        Ok(Some(line)) => {
+                            line_num += 1;
+                            if regex.is_match(&line) {
+                                matches.push(serde_json::json!({
+                                    "path": entry.path().to_string_lossy().to_string(),
+                                    "line": line_num,
+                                    "content": line.trim(),
+                                }));
+                            }
+                        }
+                        Ok(None) => break, // EOF
+                        Err(e) => {
+                            warn!("Error reading file {}: {}", entry.path().display(), e);
+                            break;
+                        }
                     }
                 }
             }
