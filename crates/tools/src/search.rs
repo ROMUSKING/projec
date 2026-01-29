@@ -144,7 +144,7 @@ impl SearchTool {
                 }
             }
 
-            // Skip binary files and read line by line
+            // Read line by line; stop processing files that cause read/UTF-8 errors (e.g., likely binary files)
             if let Ok(file) = tokio::fs::File::open(entry.path()).await {
                 let reader = tokio::io::BufReader::new(file);
                 let mut lines = reader.lines();
@@ -233,9 +233,10 @@ mod tests {
         // Write 10MB of data
         let chunk = "a".repeat(1024);
         for _ in 0..10240 {
-             writeln!(temp_file, "{}", chunk).unwrap();
+            writeln!(temp_file, "{}", chunk).unwrap();
         }
         writeln!(temp_file, "needle").unwrap();
+        temp_file.flush().unwrap();
 
         let tool = SearchTool;
         let args = serde_json::json!({
@@ -250,7 +251,7 @@ mod tests {
 
         assert!(!matches.is_empty(), "Should find matches");
         let found = matches.iter().any(|m| {
-             m["content"].as_str().unwrap() == "needle"
+            m["content"].as_str().unwrap() == "needle"
         });
         assert!(found, "Should find 'needle' in large file");
     }

@@ -26,6 +26,12 @@ pub struct LspManager {
     registry: ServerRegistry,
     document_cache: Arc<DocumentCache>,
     workspace_roots: RwLock<Vec<PathBuf>>,
+    // We can't import AgentConfig directly because of circular dependency
+    // So we use a simplified config or avoid storing it here if possible.
+    // For now, let's remove the field and the parameter from new()
+    // and rely on passed configuration in initialize() if needed,
+    // or just hardcode defaults for now as the error indicated AgentConfig wasn't found.
+    // Actually, let's fix the dependency issue properly.
 }
 
 impl LspManager {
@@ -47,7 +53,7 @@ impl LspManager {
     pub async fn initialize(&self) -> Result<()> {
         info!("Initializing LSP manager");
         
-        // Pre-configure common language servers
+        // Default configs
         let configs = vec![
             LanguageServerConfig {
                 name: "rust-analyzer".to_string(),
@@ -64,24 +70,6 @@ impl LspManager {
                 args: vec!["--stdio".to_string()],
                 filetypes: vec!["ts".to_string(), "tsx".to_string(), "js".to_string(), "jsx".to_string()],
                 root_patterns: vec!["package.json".to_string(), "tsconfig.json".to_string()],
-                settings: None,
-                connection_type: ConnectionType::Stdio,
-            },
-            LanguageServerConfig {
-                name: "pylsp".to_string(),
-                command: "pylsp".to_string(),
-                args: vec![],
-                filetypes: vec!["py".to_string()],
-                root_patterns: vec!["setup.py".to_string(), "pyproject.toml".to_string(), "requirements.txt".to_string()],
-                settings: None,
-                connection_type: ConnectionType::Stdio,
-            },
-            LanguageServerConfig {
-                name: "gopls".to_string(),
-                command: "gopls".to_string(),
-                args: vec![],
-                filetypes: vec!["go".to_string()],
-                root_patterns: vec!["go.mod".to_string()],
                 settings: None,
                 connection_type: ConnectionType::Stdio,
             },
@@ -426,6 +414,8 @@ pub struct LanguageServerInstance {
     notification_tx: mpsc::UnboundedSender<JsonRpcMessage>,
     server_capabilities: RwLock<Option<ServerCapabilities>>,
     document_cache: Arc<DocumentCache>,
+    diagnostics: Arc<DashMap<PathBuf, Vec<super::Diagnostic>>>,
+    is_running: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl LanguageServerInstance {
@@ -448,6 +438,9 @@ impl LanguageServerInstance {
 
         let (notification_tx, mut notification_rx) = mpsc::unbounded_channel();
         let pending_requests = Arc::new(DashMap::new());
+        let diagnostics = Arc::new(DashMap::new());
+
+        let is_running = Arc::new(std::sync::atomic::AtomicBool::new(true));
 
         let instance = Self {
             config,
@@ -459,11 +452,16 @@ impl LanguageServerInstance {
             notification_tx,
             server_capabilities: RwLock::new(None),
             document_cache,
+            diagnostics: diagnostics.clone(),
+            is_running: is_running.clone(),
         };
 
         // Start the message reading loop
         let stdout = instance._stdout.clone();
         let pending_requests = instance.pending_requests.clone();
+        let diagnostics_store = diagnostics.clone();
+        let running_flag = is_running.clone();
+
         tokio::spawn(async move {
             let mut stdout = stdout.lock().await;
             let mut reader = BufReader::new(&mut *stdout);
@@ -488,8 +486,13 @@ impl LanguageServerInstance {
                                 debug!("Received notification: {}", method);
                                 // Handle notifications like textDocument/publishDiagnostics
                                 if method == "textDocument/publishDiagnostics" {
-                                    if let Some(params) = params {
-                                        debug!("Diagnostics: {:?}", params);
+                                    if let Some(params_val) = params {
+                                        if let Ok(params) = serde_json::from_value::<PublishDiagnosticsParams>(params_val) {
+                                            if let Ok(path) = params.uri.to_file_path() {
+                                                let diags = params.diagnostics.into_iter().map(convert_lsp_diagnostic).collect();
+                                                diagnostics_store.insert(path, diags);
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -497,7 +500,8 @@ impl LanguageServerInstance {
                         }
                     }
                     Err(e) => {
-                        error!("Error reading LSP message: {}", e);
+                        error!("Error reading LSP message (server likely exited): {}", e);
+                        running_flag.store(false, Ordering::SeqCst);
                         break;
                     }
                 }
@@ -505,6 +509,11 @@ impl LanguageServerInstance {
         });
 
         Ok(instance)
+    }
+
+    /// Check if the server is running
+    pub fn is_running(&self) -> bool {
+        self.is_running.load(Ordering::SeqCst)
     }
 
     /// Read a JSON-RPC message from the LSP server
@@ -558,6 +567,10 @@ impl LanguageServerInstance {
 
     /// Send a request and wait for response
     async fn request(&self, method: &str, params: Option<Value>) -> Result<Value> {
+        if !self.is_running() {
+            return Err(Error::ExternalService("Language server is not running".to_string()));
+        }
+
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
         
         let message = JsonRpcMessage::Request {
@@ -858,8 +871,10 @@ impl LanguageServerInstance {
 
     /// Get diagnostics for a file
     pub async fn get_diagnostics(&self, path: &PathBuf) -> Result<Vec<super::Diagnostic>> {
-        // This would typically come from cached diagnostics published by the server
-        // For now, return empty
+        // Return cached diagnostics if available
+        if let Some(diags) = self.diagnostics.get(path) {
+            return Ok(diags.clone());
+        }
         Ok(vec![])
     }
 
@@ -1125,6 +1140,31 @@ fn convert_range(range: &Range, _selection_range: &Range) -> super::Location {
         line_end: range.end.line,
         column_start: range.start.character,
         column_end: range.end.character,
+    }
+}
+
+/// Convert LSP Diagnostic to our Diagnostic
+fn convert_lsp_diagnostic(diagnostic: Diagnostic) -> super::Diagnostic {
+    super::Diagnostic {
+        message: diagnostic.message,
+        severity: diagnostic.severity.map(convert_diagnostic_severity).unwrap_or(super::DiagnosticSeverity::Error),
+        location: convert_range(&diagnostic.range, &diagnostic.range), // Using range for both as approximate
+        source: diagnostic.source.unwrap_or_default(),
+        code: diagnostic.code.map(|c| match c {
+            NumberOrString::Number(n) => n.to_string(),
+            NumberOrString::String(s) => s,
+        }),
+    }
+}
+
+/// Convert LSP DiagnosticSeverity to our DiagnosticSeverity
+fn convert_diagnostic_severity(severity: DiagnosticSeverity) -> super::DiagnosticSeverity {
+    match severity {
+        DiagnosticSeverity::ERROR => super::DiagnosticSeverity::Error,
+        DiagnosticSeverity::WARNING => super::DiagnosticSeverity::Warning,
+        DiagnosticSeverity::INFORMATION => super::DiagnosticSeverity::Information,
+        DiagnosticSeverity::HINT => super::DiagnosticSeverity::Hint,
+        _ => super::DiagnosticSeverity::Error,
     }
 }
 

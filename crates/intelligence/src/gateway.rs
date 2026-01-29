@@ -68,12 +68,12 @@ pub struct OpenAiGateway {
 }
 
 impl OpenAiGateway {
-    pub fn new(api_key: String, model: String) -> Self {
+    pub fn new(api_key: String, model: String, client: reqwest::Client) -> Self {
         Self {
             api_key,
             base_url: "https://api.openai.com".to_string(),
             model,
-            client: reqwest::Client::new(),
+            client,
         }
     }
 
@@ -95,19 +95,83 @@ impl LlmGateway for OpenAiGateway {
         Ok(())
     }
 
-    async fn generate(&self, _prompt: &str) -> Result<super::GenerationResult> {
-        // TODO: Implement OpenAI completion
-        Err(Error::Internal("Not implemented".to_string()))
+    async fn generate(&self, prompt: &str) -> Result<super::GenerationResult> {
+        let request = serde_json::json!({
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.7
+        });
+
+        let response = self.client
+            .post(format!("{}/chat/completions", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| Error::ExternalService(format!("OpenAI request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(Error::ExternalService(format!("OpenAI error: {}", response.status())));
+        }
+
+        let body: serde_json::Value = response.json().await
+            .map_err(|e| Error::ExternalService(format!("Failed to parse OpenAI response: {}", e)))?;
+
+        let content = body["choices"][0]["message"]["content"]
+            .as_str()
+            .ok_or_else(|| Error::ExternalService("Invalid OpenAI response format".to_string()))?
+            .to_string();
+
+        let tokens_used = body["usage"]["total_tokens"]
+            .as_u64()
+            .unwrap_or(0) as u32;
+
+        let finish_reason = body["choices"][0]["finish_reason"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string();
+
+        Ok(super::GenerationResult {
+            content,
+            tokens_used,
+            model: self.model.clone(),
+            finish_reason,
+        })
     }
 
     async fn generate_stream(&self, _prompt: &str) -> Result<StreamResult> {
-        // TODO: Implement OpenAI streaming
-        Err(Error::Internal("Not implemented".to_string()))
+        // TODO: Implement OpenAI streaming (requires handling SSE)
+        Err(Error::Internal("OpenAI streaming not yet implemented".to_string()))
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
-        // TODO: Fetch available models from OpenAI
-        Ok(vec![])
+        let response = self.client
+            .get(format!("{}/models", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await
+            .map_err(|e| Error::ExternalService(format!("OpenAI request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(Error::ExternalService(format!("OpenAI error: {}", response.status())));
+        }
+
+        let body: serde_json::Value = response.json().await
+            .map_err(|e| Error::ExternalService(format!("Failed to parse OpenAI models: {}", e)))?;
+
+        let models = body["data"]
+            .as_array()
+            .ok_or_else(|| Error::ExternalService("Invalid OpenAI models response".to_string()))?
+            .iter()
+            .map(|m| ModelInfo {
+                id: m["id"].as_str().unwrap_or("unknown").to_string(),
+                name: m["id"].as_str().unwrap_or("unknown").to_string(),
+                context_window: 4096, // Placeholder, as OpenAI API doesn't always return this
+                capabilities: vec![ModelCapability::Chat],
+            })
+            .collect();
+
+        Ok(models)
     }
 
     async fn health_check(&self) -> Result<bool> {
@@ -125,12 +189,12 @@ pub struct AnthropicGateway {
 }
 
 impl AnthropicGateway {
-    pub fn new(api_key: String, model: String) -> Self {
+    pub fn new(api_key: String, model: String, client: reqwest::Client) -> Self {
         Self {
             api_key,
             base_url: "https://api.anthropic.com".to_string(),
             model,
-            client: reqwest::Client::new(),
+            client,
         }
     }
 
@@ -181,11 +245,11 @@ pub struct OllamaGateway {
 }
 
 impl OllamaGateway {
-    pub fn new(model: String) -> Self {
+    pub fn new(model: String, client: reqwest::Client) -> Self {
         Self {
             base_url: "http://localhost:11434".to_string(),
             model,
-            client: reqwest::Client::new(),
+            client,
         }
     }
 
@@ -288,11 +352,20 @@ impl LlmGateway for MockGateway {
 }
 
 /// Gateway factory for creating appropriate gateway instances
-pub struct GatewayFactory;
+pub struct GatewayFactory {
+    client: reqwest::Client,
+}
 
 impl GatewayFactory {
+    pub fn new() -> Self {
+        Self {
+            client: reqwest::Client::new(),
+        }
+    }
+
     /// Create a gateway based on provider configuration
     pub fn create(
+        &self,
         provider: &str,
         api_key: Option<String>,
         model: String,
@@ -300,19 +373,25 @@ impl GatewayFactory {
         match provider {
             "openai" => {
                 let key = api_key.ok_or_else(|| Error::Config("OpenAI API key required".to_string()))?;
-                Ok(Box::new(OpenAiGateway::new(key, model)))
+                Ok(Box::new(OpenAiGateway::new(key, model, self.client.clone())))
             }
             "anthropic" => {
                 let key = api_key.ok_or_else(|| Error::Config("Anthropic API key required".to_string()))?;
-                Ok(Box::new(AnthropicGateway::new(key, model)))
+                Ok(Box::new(AnthropicGateway::new(key, model, self.client.clone())))
             }
             "ollama" => {
-                Ok(Box::new(OllamaGateway::new(model)))
+                Ok(Box::new(OllamaGateway::new(model, self.client.clone())))
             }
             "mock" => {
                 Ok(Box::new(MockGateway::new()))
             }
             _ => Err(Error::Config(format!("Unknown provider: {}", provider))),
         }
+    }
+}
+
+impl Default for GatewayFactory {
+    fn default() -> Self {
+        Self::new()
     }
 }

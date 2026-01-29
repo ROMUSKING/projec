@@ -46,6 +46,9 @@ pub enum Error {
     #[error("External service error: {0}")]
     ExternalService(String),
 
+    #[error("Execution error: {0}")]
+    Execution(String),
+
     #[error("Cancelled")]
     Cancelled,
 }

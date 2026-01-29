@@ -34,7 +34,8 @@ impl ToolFramework {
 
     /// Register built-in tools
     fn register_builtin_tools(&mut self) {
-        self.registry.register(Box::new(filesystem::FileSystemTool));
+        // 10MB default limit, can be made configurable later
+        self.registry.register(Box::new(filesystem::FileSystemTool::new(10 * 1024 * 1024)));
         self.registry.register(Box::new(git::GitTool));
         self.registry.register(Box::new(search::SearchTool));
         self.registry.register(Box::new(http::HttpTool));
