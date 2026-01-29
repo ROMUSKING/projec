@@ -1,0 +1,40 @@
+# Rust build artifacts
+/target/
+
+# Cargo.lock - typically ignored for applications
+Cargo.lock
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Backup files
+*.bak
+*.backup
+
+# Log files
+*.log
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Test coverage
+*.profraw
+*.profdata
+
+# Rust Analyzer
+.rust-analyzer/
+
+# Debug files
+*.pdb

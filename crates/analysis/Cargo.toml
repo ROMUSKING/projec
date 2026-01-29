@@ -1,0 +1,49 @@
+[package]
+name = "analysis"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# Internal
+common = { workspace = true }
+config = { workspace = true, package = "agent-config" }
+
+# LSP
+lsp-types = { workspace = true }
+tower-lsp = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+tokio-util = { workspace = true }
+
+# Utilities
+tracing = { workspace = true }
+regex = { workspace = true }
+glob = { workspace = true }
+walkdir = { workspace = true }
+dashmap = { workspace = true }
+
+# LSP client additional dependencies
+tokio-process = "0.2"
+tokio-io = "0.1"
+futures = "0.3"
+bytes = "1.5"
+crossbeam-channel = "0.5"
+parking_lot = { workspace = true }
+
+[dev-dependencies]
+mockall = { workspace = true }
+tempfile = { workspace = true }
