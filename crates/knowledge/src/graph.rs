@@ -146,14 +146,120 @@ impl KnowledgeGraph {
         }])
     }
 
-    async fn query_find_path(&self, _query: &super::GraphQuery) -> Result<Vec<super::GraphResult>> {
-        // TODO: Implement path finding
+    async fn query_find_path(&self, query: &super::GraphQuery) -> Result<Vec<super::GraphResult>> {
+        let from_id = query.parameters.get("from").and_then(|v| v.as_str()).ok_or_else(|| Error::Validation("From ID required".to_string()))?;
+        let to_id = query.parameters.get("to").and_then(|v| v.as_str()).ok_or_else(|| Error::Validation("To ID required".to_string()))?;
+
+        if !self.entities.contains_key(from_id) {
+            return Err(Error::NotFound(format!("Start entity not found: {}", from_id)));
+        }
+        if !self.entities.contains_key(to_id) {
+            return Err(Error::NotFound(format!("End entity not found: {}", to_id)));
+        }
+
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(vec![from_id.to_string()]);
+
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(from_id.to_string());
+
+        while let Some(path) = queue.pop_front() {
+            let current = path.last().unwrap();
+
+            if current == to_id {
+                // Found path
+                let mut entities = Vec::new();
+                let mut relations = Vec::new();
+
+                for i in 0..path.len() {
+                    entities.push(self.entities.get(&path[i]).unwrap().clone());
+                    if i < path.len() - 1 {
+                        // Find relation between current and next
+                        if let Some(rel) = self.relations.iter().find(|r|
+                            (r.source == path[i] && r.target == path[i+1]) ||
+                            (r.source == path[i+1] && r.target == path[i])
+                        ) {
+                            relations.push(rel.clone());
+                        }
+                    }
+                }
+
+                return Ok(vec![super::GraphResult {
+                    entities,
+                    relations,
+                    score: 1.0,
+                }]);
+            }
+
+            // Find neighbors
+            let neighbors: Vec<String> = self.relations.iter()
+                .filter(|r| r.source == *current || r.target == *current)
+                .map(|r| if r.source == *current { r.target.clone() } else { r.source.clone() })
+                .collect();
+
+            for neighbor in neighbors {
+                if visited.insert(neighbor.clone()) {
+                    let mut new_path = path.clone();
+                    new_path.push(neighbor);
+                    queue.push_back(new_path);
+                }
+            }
+        }
+
         Ok(vec![])
     }
 
-    async fn query_similar_entities(&self, _query: &super::GraphQuery) -> Result<Vec<super::GraphResult>> {
-        // TODO: Implement similarity search
-        Ok(vec![])
+    async fn query_similar_entities(&self, query: &super::GraphQuery) -> Result<Vec<super::GraphResult>> {
+        let entity_type_str = query.parameters.get("entity_type").and_then(|v| v.as_str());
+        let properties = query.parameters.get("properties").and_then(|v| v.as_object());
+
+        let mut results = Vec::new();
+
+        for entity in self.entities.values() {
+            // Filter by entity type if specified
+            if let Some(type_str) = entity_type_str {
+                // Simple string matching for now since we can't easily parse the enum back from string without FromStr
+                if format!("{:?}", entity.entity_type).to_lowercase() != type_str.to_lowercase() {
+                    continue;
+                }
+            }
+
+            // Filter by properties if specified
+            if let Some(props) = properties {
+                let mut match_count = 0;
+                let mut total_props = 0;
+
+                for (key, value) in props {
+                    total_props += 1;
+                    if let Some(entity_val) = entity.properties.get(key) {
+                        if entity_val == value {
+                            match_count += 1;
+                        }
+                    }
+                }
+
+                if match_count > 0 {
+                    let score = match_count as f32 / total_props as f32;
+                    results.push(super::GraphResult {
+                        entities: vec![entity.clone()],
+                        relations: vec![],
+                        score,
+                    });
+                }
+            } else if entity_type_str.is_some() {
+                // If only type is specified, return matches with score 1.0
+                results.push(super::GraphResult {
+                    entities: vec![entity.clone()],
+                    relations: vec![],
+                    score: 1.0,
+                });
+            }
+        }
+
+        // Sort by score descending
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+        Ok(results)
     }
 
     /// Find impact of changing an entity
@@ -279,5 +385,63 @@ mod tests {
 
         graph.add_relation(relation).await.unwrap();
         assert_eq!(graph.find_relations("test-1").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_find_path() {
+        let mut graph = KnowledgeGraph::new();
+        let e1 = Entity { id: "1".to_string(), name: "1".to_string(), entity_type: EntityType::Concept, properties: HashMap::new() };
+        let e2 = Entity { id: "2".to_string(), name: "2".to_string(), entity_type: EntityType::Concept, properties: HashMap::new() };
+        let e3 = Entity { id: "3".to_string(), name: "3".to_string(), entity_type: EntityType::Concept, properties: HashMap::new() };
+
+        graph.add_entity(e1).await.unwrap();
+        graph.add_entity(e2).await.unwrap();
+        graph.add_entity(e3).await.unwrap();
+
+        graph.add_relation(Relation { source: "1".to_string(), target: "2".to_string(), relation_type: RelationType::DependsOn, properties: HashMap::new() }).await.unwrap();
+        graph.add_relation(Relation { source: "2".to_string(), target: "3".to_string(), relation_type: RelationType::DependsOn, properties: HashMap::new() }).await.unwrap();
+
+        let query = super::super::GraphQuery {
+            query_type: super::super::QueryType::FindPath,
+            parameters: {
+                let mut p = HashMap::new();
+                p.insert("from".to_string(), serde_json::json!("1"));
+                p.insert("to".to_string(), serde_json::json!("3"));
+                p
+            },
+        };
+
+        let result = graph.query(&query).await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].entities.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_similar_entities() {
+        let mut graph = KnowledgeGraph::new();
+        let mut props = HashMap::new();
+        props.insert("tag".to_string(), serde_json::json!("rust"));
+
+        let e1 = Entity { id: "1".to_string(), name: "1".to_string(), entity_type: EntityType::Concept, properties: props.clone() };
+        let e2 = Entity { id: "2".to_string(), name: "2".to_string(), entity_type: EntityType::Concept, properties: props };
+        let e3 = Entity { id: "3".to_string(), name: "3".to_string(), entity_type: EntityType::Concept, properties: HashMap::new() };
+
+        graph.add_entity(e1).await.unwrap();
+        graph.add_entity(e2).await.unwrap();
+        graph.add_entity(e3).await.unwrap();
+
+        let query = super::super::GraphQuery {
+            query_type: super::super::QueryType::SimilarEntities,
+            parameters: {
+                let mut p = HashMap::new();
+                let mut props_search = serde_json::Map::new();
+                props_search.insert("tag".to_string(), serde_json::json!("rust"));
+                p.insert("properties".to_string(), serde_json::Value::Object(props_search));
+                p
+            },
+        };
+
+        let result = graph.query(&query).await.unwrap();
+        assert_eq!(result.len(), 2);
     }
 }
