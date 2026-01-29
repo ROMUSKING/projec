@@ -5,6 +5,7 @@
 use super::{Parameter, ParameterType, ReturnType, Tool};
 use common::{async_trait, Error, Result};
 use serde_json::Value;
+use tokio::io::AsyncBufReadExt;
 
 /// Search tool
 pub struct SearchTool;
@@ -142,13 +143,18 @@ impl SearchTool {
                 }
             }
 
-            // Skip binary files
-            if let Ok(content) = tokio::fs::read_to_string(entry.path()).await {
-                for (line_num, line) in content.lines().enumerate() {
-                    if regex.is_match(line) {
+            // Skip binary files and read line by line
+            if let Ok(file) = tokio::fs::File::open(entry.path()).await {
+                let reader = tokio::io::BufReader::new(file);
+                let mut lines = reader.lines();
+                let mut line_num = 0;
+
+                while let Ok(Some(line)) = lines.next_line().await {
+                    line_num += 1;
+                    if regex.is_match(&line) {
                         matches.push(serde_json::json!({
                             "path": entry.path().to_string_lossy().to_string(),
-                            "line": line_num + 1,
+                            "line": line_num,
                             "content": line.trim(),
                         }));
                     }
@@ -200,5 +206,42 @@ impl SearchTool {
             "total": 0,
             "note": "Symbol search requires LSP integration",
         }))
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[tokio::test]
+    async fn test_search_tool_large_file() {
+        // Create a temp dir to isolate the test
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("large_file.txt");
+        let mut temp_file = std::fs::File::create(&file_path).unwrap();
+
+        // Write 10MB of data
+        let chunk = "a".repeat(1024);
+        for _ in 0..10240 {
+             writeln!(temp_file, "{}", chunk).unwrap();
+        }
+        writeln!(temp_file, "needle").unwrap();
+
+        let tool = SearchTool;
+        let args = serde_json::json!({
+            "operation": "grep",
+            "path": temp_dir.path().to_str().unwrap(),
+            "pattern": "needle",
+            "file_pattern": "large_file.txt"
+        });
+
+        let result = tool.execute(&args).await.unwrap();
+        let matches = result["matches"].as_array().unwrap();
+
+        assert!(!matches.is_empty(), "Should find matches");
+        let found = matches.iter().any(|m| {
+             m["content"].as_str().unwrap() == "needle"
+        });
+        assert!(found, "Should find 'needle' in large file");
     }
 }
