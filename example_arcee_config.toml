@@ -1,61 +1,63 @@
-# Example configuration for using arcee-ai/trinity-large-preview:free through OpenRouter
+    # Example Arcee Configuration
+    # This configuration uses the Arcee LLM provider directly
 
-[agent]
-name = "coding-agent"
-version = "0.1.0"
-improvement_interval = 3600
-max_concurrent_tasks = 4
-log_level = "info"
+    [agent]
+    name = "Arcee Coding Agent"
+    version = "1.0.0"
+    improvement_interval = 3600
+    max_concurrent_tasks = 4
+    log_level = "info"
 
-[agent.self_improvement]
-enabled = true
-auto_apply = false
-safety_checks = true
-max_modifications_per_session = 10
+    [agent.self_improvement]
+    enabled = true
+    auto_apply = false
+    safety_checks = true
+    max_modifications_per_session = 10
 
-[llm]
-provider = "openrouter"
-model = "arcee-ai/trinity-large-preview:free"
-temperature = 0.7
-max_tokens = 4096
+    [lsp]
+    enabled = true
+    timeout = 30
 
-[llm.providers.openrouter]
-api_key = "${OPENROUTER_API_KEY}"  # Set this in your environment variables
-base_url = "https://openrouter.ai/api/v1"
+    [safety]
+    protected_paths = [".agent/core/**", ".agent/safety/**", ".agent/auth/**"]
+    max_file_size_mb = 10
+    forbidden_commands = ["rm -rf /", "dd if=/dev/zero"]
+    require_approval_for = ["delete", "modify_protected", "git_push"]
 
-[lsp]
-enabled = true
-timeout = 30
+    [tools]
 
-[safety]
-protected_paths = [".agent/core/**", ".agent/safety/**", ".agent/auth/**"]
-max_file_size_mb = 10
-forbidden_commands = ["rm -rf /", "dd if=/dev/zero"]
-require_approval_for = ["delete", "modify_protected", "git_push"]
+    [tools.git]
+    enabled = true
+    auto_commit = false
+    commit_prefix = "[agent]"
 
-[tools]
+    [tools.test]
+    enabled = true
+    framework = "cargo"
+    auto_run = true
+    fail_on_error = true
 
-[tools.git]
-enabled = true
-auto_commit = false
-commit_prefix = "[agent]"
+    [self_compile]
+    enabled = true
+    auto_restart = true
+    backup_count = 5
 
-[tools.test]
-enabled = true
-framework = "cargo"
-auto_run = true
-fail_on_error = true
+    [telemetry]
+    enabled = false
+    surveys_enabled = false
+    anonymize = true
+    encryption_standard = "AES-256"
+    storage_path = ".agent/telemetry"
+    central_server_url = ""
+    telemetry_api_key = ""
 
-[self_compile]
-enabled = true
-auto_restart = true
-backup_count = 5
+    [llm]
+    provider = "arcee"
+    model = "arcee-ai/trinity-large-preview:free"
+    api_key = "YOUR_ARCEE_API_KEY"  # Get this from https://app.arcee.ai/settings/keys
+    temperature = 0.7
+    max_tokens = 4096
 
-[telemetry]
-enabled = false
-surveys_enabled = false
-anonymize = true
-encryption_standard = "AES-256"
-storage_path = ".agent/telemetry"
-central_server_url = ""
-telemetry_api_key = ""
+    [llm.providers.arcee]
+    api_key = "YOUR_ARCEE_API_KEY"
+    base_url = "https://api.arcee.ai"

@@ -535,6 +535,7 @@ impl AgentConfig {
                 "deepseek" => self.llm.providers.deepseek.api_key = api_key,
                 "perplexity" => self.llm.providers.perplexity.api_key = api_key,
                 "ai21" => self.llm.providers.ai21.api_key = api_key,
+                "arcee" => self.llm.providers.arcee.api_key = api_key,
                 _ => {}
             }
         }
@@ -555,6 +556,7 @@ impl AgentConfig {
                 "deepseek" => self.llm.providers.deepseek.base_url = base_url,
                 "perplexity" => self.llm.providers.perplexity.base_url = base_url,
                 "ai21" => self.llm.providers.ai21.base_url = base_url,
+                "arcee" => self.llm.providers.arcee.base_url = base_url,
                 _ => {}
             }
         }
@@ -649,7 +651,7 @@ impl AgentConfig {
         let valid_providers = [
             "anthropic", "openai", "ollama", "gemini", "groq", "azure",
             "cohere", "mistral", "openrouter", "together",
-            "huggingface", "deepseek", "perplexity", "ai21", "vertex_ai"
+            "huggingface", "deepseek", "perplexity", "ai21", "vertex_ai", "arcee"
         ];
         if !valid_providers.contains(&self.llm.provider.as_str()) {
             return Err(Error::Validation(format!(
@@ -851,6 +853,21 @@ impl AgentConfig {
                 if let Err(e) = url::Url::parse(&self.llm.providers.ai21.base_url) {
                     return Err(Error::Validation(format!(
                         "Invalid AI21 Labs base URL: {}",
+                        e
+                    )));
+                }
+            }
+            "arcee" => {
+                if self.llm.providers.arcee.api_key.is_empty()
+                    || self.llm.providers.arcee.api_key == "${ARCEE_API_KEY}"
+                {
+                    return Err(Error::Validation(
+                        "API key is required for Arcee provider. Set ARCEE_API_KEY environment variable or provide it in config.".to_string(),
+                    ));
+                }
+                if let Err(e) = url::Url::parse(&self.llm.providers.arcee.base_url) {
+                    return Err(Error::Validation(format!(
+                        "Invalid Arcee base URL: {}",
                         e
                     )));
                 }
@@ -1075,6 +1092,7 @@ impl AgentConfig {
             "deepseek" => &self.llm.providers.deepseek.api_key,
             "perplexity" => &self.llm.providers.perplexity.api_key,
             "ai21" => &self.llm.providers.ai21.api_key,
+            "arcee" => &self.llm.providers.arcee.api_key,
             _ => "",
         }
     }
@@ -1096,6 +1114,7 @@ impl AgentConfig {
             "deepseek" => &self.llm.providers.deepseek.base_url,
             "perplexity" => &self.llm.providers.perplexity.base_url,
             "ai21" => &self.llm.providers.ai21.base_url,
+            "arcee" => &self.llm.providers.arcee.base_url,
             _ => "",
         }
     }

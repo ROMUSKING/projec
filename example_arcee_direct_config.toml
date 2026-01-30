@@ -1,0 +1,61 @@
+# Example configuration for using arcee-ai/trinity-large-preview:free directly through Arcee API
+
+[agent]
+name = "coding-agent"
+version = "0.1.0"
+improvement_interval = 3600
+max_concurrent_tasks = 4
+log_level = "info"
+
+[agent.self_improvement]
+enabled = true
+auto_apply = false
+safety_checks = true
+max_modifications_per_session = 10
+
+[llm]
+provider = "arcee"
+model = "arcee-ai/trinity-large-preview:free"
+temperature = 0.7
+max_tokens = 4096
+
+[llm.providers.arcee]
+api_key = "${ARCEE_API_KEY}"  # Set this in your environment variables
+base_url = "https://api.arcee.ai"
+
+[lsp]
+enabled = true
+timeout = 30
+
+[safety]
+protected_paths = [".agent/core/**", ".agent/safety/**", ".agent/auth/**"]
+max_file_size_mb = 10
+forbidden_commands = ["rm -rf /", "dd if=/dev/zero"]
+require_approval_for = ["delete", "modify_protected", "git_push"]
+
+[tools]
+
+[tools.git]
+enabled = true
+auto_commit = false
+commit_prefix = "[agent]"
+
+[tools.test]
+enabled = true
+framework = "cargo"
+auto_run = true
+fail_on_error = true
+
+[self_compile]
+enabled = true
+auto_restart = true
+backup_count = 5
+
+[telemetry]
+enabled = false
+surveys_enabled = false
+anonymize = true
+encryption_standard = "AES-256"
+storage_path = ".agent/telemetry"
+central_server_url = ""
+telemetry_api_key = ""

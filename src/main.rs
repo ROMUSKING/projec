@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use tracing::{info, warn};
+use tracing::{info, warn, error};
 
 /// Self-developing coding agent
 #[derive(Parser, Debug)]
@@ -96,7 +96,7 @@ async fn main() -> Result<()> {
         run_single_task(&mut agent, &task_description, cli.workspace).await?;
     } else {
         info!("Starting interactive mode");
-        run_interactive_mode(&mut agent).await?;
+        run_interactive_mode(agent).await?;
     }
 
     info!("Coding agent shutting down");
@@ -235,11 +235,26 @@ async fn run_single_task(
 }
 
 /// Run interactive mode with REPL
-async fn run_interactive_mode(agent: &mut agent_core::Agent) -> Result<()> {
+async fn run_interactive_mode(mut agent: agent_core::Agent) -> Result<()> {
     use std::io::{self, Write};
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
 
     info!("Interactive mode started - Type 'help' for commands, 'exit' to quit");
 
+    // Wrap agent in Arc and Mutex to allow sharing between tasks
+    let agent_arc = Arc::new(Mutex::new(agent));
+    let agent_clone = Arc::clone(&agent_arc);
+    
+    // Run the agent in a background task
+    let agent_handle = tokio::spawn(async move {
+        let mut agent = agent_clone.lock().await;
+        if let Err(e) = agent.run().await {
+            error!("Agent error: {}", e);
+        }
+    });
+
+    // REPL loop for user input
     loop {
         print!("agent> ");
         io::stdout().flush()?;
@@ -257,14 +272,17 @@ async fn run_interactive_mode(agent: &mut agent_core::Agent) -> Result<()> {
                 print_help();
             }
             "status" => {
+                let agent = agent_arc.lock().await;
                 let state = agent.current_state().await;
                 println!("Current state: {}", state);
             }
             "metrics" => {
+                let agent = agent_arc.lock().await;
                 let metrics = agent.get_metrics().await;
                 print_metrics(&metrics);
             }
             "improve" => {
+                let agent = agent_arc.lock().await;
                 info!("Triggering self-improvement cycle");
                 agent.trigger_self_improvement().await?;
             }
@@ -275,6 +293,7 @@ async fn run_interactive_mode(agent: &mut agent_core::Agent) -> Result<()> {
                 // Treat as a task
                 use agent_core::*;
                 let task = Task::new(input).with_priority(TaskPriority::Normal);
+                let agent = agent_arc.lock().await;
                 match agent.submit_task(task).await {
                     Ok(id) => println!("Task submitted: {}", id),
                     Err(e) => eprintln!("Failed to submit task: {}", e),
@@ -283,18 +302,10 @@ async fn run_interactive_mode(agent: &mut agent_core::Agent) -> Result<()> {
         }
     }
 
-    // Run agent to process tasks (with timeout)
-    info!("Running agent to process pending tasks");
-    let run_future = agent.run();
-    let timeout = tokio::time::Duration::from_secs(60); // 1 minute timeout
-
-    match tokio::time::timeout(timeout, run_future).await {
-        Ok(result) => result?,
-        Err(_) => {
-            info!("Timeout reached, shutting down");
-            agent.shutdown().await?;
-        }
-    }
+    // Stop the agent and wait for completion
+    let mut agent = agent_arc.lock().await;
+    agent.shutdown().await?;
+    agent_handle.abort();
 
     Ok(())
 }
