@@ -16,6 +16,7 @@ Cargo.lock
 .env
 .env.local
 .env.*.local
+config.toml
 
 # Backup files
 *.bak
@@ -38,3 +39,5 @@ temp/
 
 # Debug files
 *.pdb
+
+

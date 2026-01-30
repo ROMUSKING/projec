@@ -292,6 +292,250 @@ impl LlmGateway for OllamaGateway {
     }
 }
 
+/// OpenRouter gateway implementation
+pub struct OpenRouterGateway {
+    api_key: String,
+    base_url: String,
+    model: String,
+    client: reqwest::Client,
+}
+
+impl OpenRouterGateway {
+    pub fn new(api_key: String, model: String, client: reqwest::Client) -> Self {
+        Self {
+            api_key,
+            base_url: "https://openrouter.ai/api/v1".to_string(),
+            model,
+            client,
+        }
+    }
+
+    pub fn with_base_url(mut self, url: String) -> Self {
+        self.base_url = url;
+        self
+    }
+}
+
+#[async_trait]
+impl LlmGateway for OpenRouterGateway {
+    async fn initialize(&mut self) -> Result<()> {
+        // TODO: Validate API key and connection
+        Ok(())
+    }
+
+    async fn shutdown(&mut self) -> Result<()> {
+        // TODO: Cleanup resources
+        Ok(())
+    }
+
+    async fn generate(&self, prompt: &str) -> Result<super::GenerationResult> {
+        let request = serde_json::json!({
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.7
+        });
+
+        let response = self.client
+            .post(format!("{}/chat/completions", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("HTTP-Referer", "https://your-app.com")  // Required by OpenRouter
+            .header("X-Title", "Your App Name")  // Required by OpenRouter
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| Error::ExternalService(format!("OpenRouter request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(Error::ExternalService(format!("OpenRouter error: {}", response.status())));
+        }
+
+        let body: serde_json::Value = response.json().await
+            .map_err(|e| Error::ExternalService(format!("Failed to parse OpenRouter response: {}", e)))?;
+
+        let content = body["choices"][0]["message"]["content"]
+            .as_str()
+            .ok_or_else(|| Error::ExternalService("Invalid OpenRouter response format".to_string()))?
+            .to_string();
+
+        let tokens_used = body["usage"]["total_tokens"]
+            .as_u64()
+            .unwrap_or(0) as u32;
+
+        let finish_reason = body["choices"][0]["finish_reason"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string();
+
+        Ok(super::GenerationResult {
+            content,
+            tokens_used,
+            model: self.model.clone(),
+            finish_reason,
+        })
+    }
+
+    async fn generate_stream(&self, _prompt: &str) -> Result<StreamResult> {
+        // TODO: Implement OpenRouter streaming (requires handling SSE)
+        Err(Error::Internal("OpenRouter streaming not yet implemented".to_string()))
+    }
+
+    async fn list_models(&self) -> Result<Vec<ModelInfo>> {
+        let response = self.client
+            .get(format!("{}/models", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await
+            .map_err(|e| Error::ExternalService(format!("OpenRouter request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(Error::ExternalService(format!("OpenRouter error: {}", response.status())));
+        }
+
+        let body: serde_json::Value = response.json().await
+            .map_err(|e| Error::ExternalService(format!("Failed to parse OpenRouter models: {}", e)))?;
+
+        let models = body["data"]
+            .as_array()
+            .ok_or_else(|| Error::ExternalService("Invalid OpenRouter models response".to_string()))?
+            .iter()
+            .map(|m| ModelInfo {
+                id: m["id"].as_str().unwrap_or("unknown").to_string(),
+                name: m["name"].as_str().unwrap_or("unknown").to_string(),
+                context_window: 4096, // Placeholder
+                capabilities: vec![ModelCapability::Chat],
+            })
+            .collect();
+
+        Ok(models)
+    }
+
+    async fn health_check(&self) -> Result<bool> {
+        // TODO: Check OpenRouter API health
+        Ok(true)
+    }
+}
+
+/// Arcee gateway implementation
+pub struct ArceeGateway {
+    api_key: String,
+    base_url: String,
+    model: String,
+    client: reqwest::Client,
+}
+
+impl ArceeGateway {
+    pub fn new(api_key: String, model: String, client: reqwest::Client) -> Self {
+        Self {
+            api_key,
+            base_url: "https://api.arcee.ai/v1".to_string(),
+            model,
+            client,
+        }
+    }
+
+    pub fn with_base_url(mut self, url: String) -> Self {
+        self.base_url = url;
+        self
+    }
+}
+
+#[async_trait]
+impl LlmGateway for ArceeGateway {
+    async fn initialize(&mut self) -> Result<()> {
+        // TODO: Validate API key and connection
+        Ok(())
+    }
+
+    async fn shutdown(&mut self) -> Result<()> {
+        // TODO: Cleanup resources
+        Ok(())
+    }
+
+    async fn generate(&self, prompt: &str) -> Result<super::GenerationResult> {
+        let request = serde_json::json!({
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.7
+        });
+
+        let response = self.client
+            .post(format!("{}/chat/completions", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| Error::ExternalService(format!("Arcee request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(Error::ExternalService(format!("Arcee error: {}", response.status())));
+        }
+
+        let body: serde_json::Value = response.json().await
+            .map_err(|e| Error::ExternalService(format!("Failed to parse Arcee response: {}", e)))?;
+
+        let content = body["choices"][0]["message"]["content"]
+            .as_str()
+            .ok_or_else(|| Error::ExternalService("Invalid Arcee response format".to_string()))?
+            .to_string();
+
+        let tokens_used = body["usage"]["total_tokens"]
+            .as_u64()
+            .unwrap_or(0) as u32;
+
+        let finish_reason = body["choices"][0]["finish_reason"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string();
+
+        Ok(super::GenerationResult {
+            content,
+            tokens_used,
+            model: self.model.clone(),
+            finish_reason,
+        })
+    }
+
+    async fn generate_stream(&self, _prompt: &str) -> Result<StreamResult> {
+        // TODO: Implement Arcee streaming (requires handling SSE)
+        Err(Error::Internal("Arcee streaming not yet implemented".to_string()))
+    }
+
+    async fn list_models(&self) -> Result<Vec<ModelInfo>> {
+        let response = self.client
+            .get(format!("{}/models", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await
+            .map_err(|e| Error::ExternalService(format!("Arcee request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(Error::ExternalService(format!("Arcee error: {}", response.status())));
+        }
+
+        let body: serde_json::Value = response.json().await
+            .map_err(|e| Error::ExternalService(format!("Failed to parse Arcee models: {}", e)))?;
+
+        let models = body["data"]
+            .as_array()
+            .ok_or_else(|| Error::ExternalService("Invalid Arcee models response".to_string()))?
+            .iter()
+            .map(|m| ModelInfo {
+                id: m["id"].as_str().unwrap_or("unknown").to_string(),
+                name: m["name"].as_str().unwrap_or("unknown").to_string(),
+                context_window: 4096, // Placeholder
+                capabilities: vec![ModelCapability::Chat],
+            })
+            .collect();
+
+        Ok(models)
+    }
+
+    async fn health_check(&self) -> Result<bool> {
+        // TODO: Check Arcee API health
+        Ok(true)
+    }
+}
+
 /// Mock gateway for testing and demonstration
 pub struct MockGateway;
 
@@ -381,6 +625,14 @@ impl GatewayFactory {
             }
             "ollama" => {
                 Ok(Box::new(OllamaGateway::new(model, self.client.clone())))
+            }
+            "openrouter" => {
+                let key = api_key.ok_or_else(|| Error::Config("OpenRouter API key required".to_string()))?;
+                Ok(Box::new(OpenRouterGateway::new(key, model, self.client.clone())))
+            }
+            "arcee" => {
+                let key = api_key.ok_or_else(|| Error::Config("Arcee API key required".to_string()))?;
+                Ok(Box::new(ArceeGateway::new(key, model, self.client.clone())))
             }
             "mock" => {
                 Ok(Box::new(MockGateway::new()))

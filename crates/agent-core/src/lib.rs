@@ -37,6 +37,7 @@ pub struct Agent {
     telemetry_manager: Arc<RwLock<TelemetryManager>>,
     self_compiler: Option<Arc<RwLock<SelfCompiler>>>,
     task_queue: TaskQueue,
+    task_relationships: TaskRelationshipTracker,
     metrics: Arc<RwLock<AgentMetrics>>,
     modules: Vec<Box<dyn Module>>,
     config: agent_config::AgentConfig,
@@ -69,6 +70,7 @@ impl Agent {
             telemetry_manager: Arc::new(RwLock::new(TelemetryManager::new(config.telemetry.clone()))),
             self_compiler,
             task_queue: TaskQueue::new(),
+            task_relationships: TaskRelationshipTracker::new(),
             metrics: Arc::new(RwLock::new(AgentMetrics::default())),
             modules: Vec::new(),
             config,
@@ -214,7 +216,7 @@ impl Agent {
             AgentState::Running(task) => {
                 if let Err(e) = self.process_task(task.clone()).await {
                     error!("Task processing error: {}", e);
-                    self.metrics.write().await.record_failure(&task.id);
+                    self.metrics.write().await.record_failure(&task.id, task.parent_id.is_some());
                     self.state_manager
                         .write()
                         .await
@@ -291,7 +293,7 @@ impl Agent {
         debug!("Created checkpoint: {}", checkpoint_id);
 
         // Update metrics
-        self.metrics.write().await.record_task_start(&task.id);
+        self.metrics.write().await.record_task_start(&task.id, task.parent_id.is_some());
 
         // Execute through orchestrator
         let result = self.orchestrator.read().await.process_task(task.clone()).await;
@@ -304,14 +306,25 @@ impl Agent {
         match &result {
             Ok(task_result) => {
                 info!("Task {:?} completed successfully in {}ms", task.id, duration);
-                self.metrics.write().await.record_success(&task.id, duration);
+                self.metrics.write().await.record_success(&task.id, duration, task.parent_id.is_some());
+                
+                // If this is a subtask, mark it as completed in the task relationships tracker
+                if let Some(parent_id) = task.parent_id {
+                    self.task_relationships.mark_subtask_completed(parent_id, task.id).await;
+                    info!("Subtask {:?} completed for parent: {:?}", task.id, parent_id);
+                    
+                    // Check if all subtasks for the parent are completed
+                    if self.task_relationships.are_all_subtasks_completed(parent_id).await {
+                        info!("All subtasks completed for parent task: {:?}", parent_id);
+                    }
+                }
                 
                 // Update knowledge base with results
                 self.update_knowledge(&task, task_result).await?;
             }
             Err(e) => {
                 error!("Task {:?} failed: {}", task.id, e);
-                self.metrics.write().await.record_failure(&task.id);
+                self.metrics.write().await.record_failure(&task.id, task.parent_id.is_some());
             }
         }
 
@@ -475,11 +488,59 @@ impl Agent {
     /// Submit a new task to the agent
     pub async fn submit_task(&self, task: Task) -> Result<TaskId> {
         info!("Task submitted: {:?}", task.id);
+        
+        // If task has a parent, add to task relationships tracker
+        if let Some(parent_id) = task.parent_id {
+            self.task_relationships.add_subtask(parent_id, task.id).await;
+        }
+        
+        // If task has subtasks, add them to the tracker
+        for &subtask_id in &task.subtasks {
+            self.task_relationships.add_subtask(task.id, subtask_id).await;
+        }
+        
         self.task_queue.push(task.clone()).await;
         let task_id = task.id;
         self.event_tx.send(AgentEvent::TaskSubmitted(task)).await
             .map_err(|_| Error::Internal("Failed to send task event".to_string()))?;
         Ok(task_id)
+    }
+
+    /// Submit a subtask to a parent task
+    pub async fn submit_subtask(&self, parent_id: TaskId, mut task: Task) -> Result<TaskId> {
+        info!("Subtask submitted: {:?} for parent: {:?}", task.id, parent_id);
+        
+        // Set parent for the subtask
+        task.parent_id = Some(parent_id);
+        
+        // Add to task relationships tracker
+        self.task_relationships.add_subtask(parent_id, task.id).await;
+        
+        self.task_queue.push(task.clone()).await;
+        let task_id = task.id;
+        self.event_tx.send(AgentEvent::TaskSubmitted(task)).await
+            .map_err(|_| Error::Internal("Failed to send task event".to_string()))?;
+        Ok(task_id)
+    }
+
+    /// Get all subtasks for a parent task
+    pub async fn get_subtasks(&self, parent_id: TaskId) -> Vec<TaskId> {
+        self.task_relationships.get_subtasks(parent_id).await
+    }
+
+    /// Get the parent task for a subtask
+    pub async fn get_parent_task(&self, task_id: TaskId) -> Option<TaskId> {
+        self.task_relationships.get_parent(task_id).await
+    }
+
+    /// Check if all subtasks of a parent task are completed
+    pub async fn are_all_subtasks_completed(&self, parent_id: TaskId) -> bool {
+        self.task_relationships.are_all_subtasks_completed(parent_id).await
+    }
+
+    /// Get completion status of subtasks for a parent task
+    pub async fn get_subtask_completion_status(&self, parent_id: TaskId) -> HashMap<TaskId, bool> {
+        self.task_relationships.get_subtask_completion_status(parent_id).await
     }
 
     /// Get current agent metrics
@@ -614,6 +675,8 @@ pub struct Task {
     pub created_at: common::chrono::DateTime<common::chrono::Utc>,
     pub deadline: Option<common::chrono::DateTime<common::chrono::Utc>>,
     pub dependencies: Vec<TaskId>,
+    pub parent_id: Option<TaskId>,
+    pub subtasks: Vec<TaskId>,
 }
 
 impl Task {
@@ -633,7 +696,21 @@ impl Task {
             created_at: common::chrono::Utc::now(),
             deadline: None,
             dependencies: Vec::new(),
+            parent_id: None,
+            subtasks: Vec::new(),
         }
+    }
+
+    /// Set the parent task
+    pub fn with_parent(mut self, parent_id: TaskId) -> Self {
+        self.parent_id = Some(parent_id);
+        self
+    }
+
+    /// Add a subtask
+    pub fn with_subtask(mut self, subtask_id: TaskId) -> Self {
+        self.subtasks.push(subtask_id);
+        self
     }
 
     /// Set the intent
@@ -759,6 +836,93 @@ pub enum ChangeType {
     Strategy,
 }
 
+/// Task relationship tracker to manage parent-child relationships
+#[derive(Debug, Default)]
+pub struct TaskRelationshipTracker {
+    /// Map of task IDs to their subtask IDs
+    task_subtasks: Arc<RwLock<HashMap<TaskId, Vec<TaskId>>>>,
+    /// Map of subtask IDs to their parent task ID
+    subtask_parent: Arc<RwLock<HashMap<TaskId, TaskId>>>,
+    /// Map of task IDs to their subtask completion status
+    subtask_completion: Arc<RwLock<HashMap<TaskId, HashMap<TaskId, bool>>>>,
+}
+
+impl TaskRelationshipTracker {
+    /// Create a new task relationship tracker
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add a subtask to a parent task
+    pub async fn add_subtask(&self, parent_id: TaskId, subtask_id: TaskId) {
+        let mut task_subtasks = self.task_subtasks.write().await;
+        let mut subtask_parent = self.subtask_parent.write().await;
+        let mut subtask_completion = self.subtask_completion.write().await;
+
+        task_subtasks.entry(parent_id).or_insert_with(Vec::new).push(subtask_id);
+        subtask_parent.insert(subtask_id, parent_id);
+        subtask_completion.entry(parent_id).or_insert_with(HashMap::new).insert(subtask_id, false);
+    }
+
+    /// Get all subtasks for a parent task
+    pub async fn get_subtasks(&self, parent_id: TaskId) -> Vec<TaskId> {
+        self.task_subtasks.read().await.get(&parent_id).cloned().unwrap_or_else(Vec::new)
+    }
+
+    /// Get the parent task for a subtask
+    pub async fn get_parent(&self, subtask_id: TaskId) -> Option<TaskId> {
+        self.subtask_parent.read().await.get(&subtask_id).cloned()
+    }
+
+    /// Mark a subtask as completed
+    pub async fn mark_subtask_completed(&self, parent_id: TaskId, subtask_id: TaskId) {
+        if let Some(completion_map) = self.subtask_completion.write().await.get_mut(&parent_id) {
+            completion_map.insert(subtask_id, true);
+        }
+    }
+
+    /// Check if all subtasks of a parent task are completed
+    pub async fn are_all_subtasks_completed(&self, parent_id: TaskId) -> bool {
+        if let Some(completion_map) = self.subtask_completion.read().await.get(&parent_id) {
+            completion_map.values().all(|&completed| completed)
+        } else {
+            // No subtasks means all are completed
+            true
+        }
+    }
+
+    /// Get completion status of subtasks for a parent task
+    pub async fn get_subtask_completion_status(&self, parent_id: TaskId) -> HashMap<TaskId, bool> {
+        self.subtask_completion.read().await.get(&parent_id).cloned().unwrap_or_else(HashMap::new)
+    }
+
+    /// Remove a task and all its subtasks from the tracker
+    pub async fn remove_task(&self, task_id: TaskId) {
+        let mut task_subtasks = self.task_subtasks.write().await;
+        let mut subtask_parent = self.subtask_parent.write().await;
+        let mut subtask_completion = self.subtask_completion.write().await;
+
+        // Remove all subtasks of the task
+        if let Some(subtasks) = task_subtasks.remove(&task_id) {
+            for subtask_id in subtasks {
+                subtask_parent.remove(&subtask_id);
+            }
+        }
+
+        // If this task is a subtask, remove it from its parent's subtask list
+        if let Some(parent_id) = subtask_parent.remove(&task_id) {
+            if let Some(subtasks) = task_subtasks.get_mut(&parent_id) {
+                subtasks.retain(|&id| id != task_id);
+            }
+            if let Some(completion_map) = subtask_completion.get_mut(&parent_id) {
+                completion_map.remove(&task_id);
+            }
+        }
+
+        subtask_completion.remove(&task_id);
+    }
+}
+
 /// Task queue with prioritization
 pub struct TaskQueue {
     inner: Arc<RwLock<VecDeque<Task>>>,
@@ -828,6 +992,9 @@ pub struct AgentMetrics {
     pub tasks_submitted: u64,
     pub tasks_completed: u64,
     pub tasks_failed: u64,
+    pub subtasks_submitted: u64,
+    pub subtasks_completed: u64,
+    pub subtasks_failed: u64,
     pub total_execution_time_ms: u64,
     pub average_execution_time_ms: u64,
     pub success_rate: f64,
@@ -846,13 +1013,22 @@ impl AgentMetrics {
     }
 
     /// Record task start
-    pub fn record_task_start(&mut self, _task_id: &TaskId) {
-        self.tasks_submitted += 1;
+    pub fn record_task_start(&mut self, _task_id: &TaskId, is_subtask: bool) {
+        if is_subtask {
+            self.subtasks_submitted += 1;
+        } else {
+            self.tasks_submitted += 1;
+        }
     }
 
     /// Record successful task completion
-    pub fn record_success(&mut self, _task_id: &TaskId, duration_ms: u64) {
-        self.tasks_completed += 1;
+    pub fn record_success(&mut self, _task_id: &TaskId, duration_ms: u64, is_subtask: bool) {
+        if is_subtask {
+            self.subtasks_completed += 1;
+        } else {
+            self.tasks_completed += 1;
+        }
+        
         self.total_execution_time_ms += duration_ms;
         self.task_latencies.push(duration_ms);
         
@@ -865,8 +1041,12 @@ impl AgentMetrics {
     }
 
     /// Record task failure
-    pub fn record_failure(&mut self, _task_id: &TaskId) {
-        self.tasks_failed += 1;
+    pub fn record_failure(&mut self, _task_id: &TaskId, is_subtask: bool) {
+        if is_subtask {
+            self.subtasks_failed += 1;
+        } else {
+            self.tasks_failed += 1;
+        }
         self.recalculate_stats();
     }
 
@@ -923,14 +1103,15 @@ mod tests {
     fn test_agent_metrics() {
         let mut metrics = AgentMetrics::new();
         
-        metrics.record_task_start(&TaskId::new());
-        metrics.record_success(&TaskId::new(), 100);
+        metrics.record_task_start(&TaskId::new(), false);
+        metrics.record_success(&TaskId::new(), 100, false);
         
         assert_eq!(metrics.tasks_submitted, 1);
         assert_eq!(metrics.tasks_completed, 1);
         assert_eq!(metrics.success_rate, 1.0);
         
-        metrics.record_failure(&TaskId::new());
+        metrics.record_task_start(&TaskId::new(), false);
+        metrics.record_failure(&TaskId::new(), false);
         assert_eq!(metrics.success_rate, 0.5);
     }
 }

@@ -240,13 +240,6 @@ async fn run_interactive_mode(agent: &mut agent_core::Agent) -> Result<()> {
 
     info!("Interactive mode started - Type 'help' for commands, 'exit' to quit");
 
-    // Start the agent in background
-    let agent_handle = tokio::spawn(async move {
-        // This is a simplified version - in production, you'd want
-        // proper message passing between the REPL and agent
-        info!("Agent running in background");
-    });
-
     loop {
         print!("agent> ");
         io::stdout().flush()?;
@@ -290,8 +283,18 @@ async fn run_interactive_mode(agent: &mut agent_core::Agent) -> Result<()> {
         }
     }
 
-    agent_handle.abort();
-    agent.shutdown().await?;
+    // Run agent to process tasks (with timeout)
+    info!("Running agent to process pending tasks");
+    let run_future = agent.run();
+    let timeout = tokio::time::Duration::from_secs(60); // 1 minute timeout
+
+    match tokio::time::timeout(timeout, run_future).await {
+        Ok(result) => result?,
+        Err(_) => {
+            info!("Timeout reached, shutting down");
+            agent.shutdown().await?;
+        }
+    }
 
     Ok(())
 }

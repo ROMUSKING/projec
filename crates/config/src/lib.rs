@@ -11,6 +11,7 @@ use std::path::PathBuf;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     /// Agent identity
+    #[serde(default)]
     pub agent: AgentSettings,
 
     /// LLM configuration
@@ -85,7 +86,8 @@ impl<'a> std::fmt::Debug for DebugRedactedLlmProviders<'a> {
             .field("huggingface", &DebugRedactedApiKeyConfig(&self.0.huggingface))
             .field("deepseek", &DebugRedactedApiKeyConfig(&self.0.deepseek))
             .field("perplexity", &DebugRedactedApiKeyConfig(&self.0.perplexity))
-            .field("ai21", &DebugRedactedApiKeyConfig(&self.0.ai21));
+            .field("ai21", &DebugRedactedApiKeyConfig(&self.0.ai21))
+            .field("arcee", &DebugRedactedApiKeyConfig(&self.0.arcee));
         
         providers.finish()
     }
@@ -243,6 +245,7 @@ impl AgentConfig {
                 "deepseek" => self.llm.providers.deepseek.api_key = val,
                 "perplexity" => self.llm.providers.perplexity.api_key = val,
                 "ai21" => self.llm.providers.ai21.api_key = val,
+                "arcee" => self.llm.providers.arcee.api_key = val,
                 _ => {}
             }
         }
@@ -284,6 +287,7 @@ impl AgentConfig {
                 "deepseek" => self.llm.providers.deepseek.base_url = val,
                 "perplexity" => self.llm.providers.perplexity.base_url = val,
                 "ai21" => self.llm.providers.ai21.base_url = val,
+                "arcee" => self.llm.providers.arcee.base_url = val,
                 _ => {}
             }
         }
@@ -339,6 +343,10 @@ impl AgentConfig {
 
         if let Ok(val) = env::var("AI21_API_KEY") {
             self.llm.providers.ai21.api_key = val;
+        }
+
+        if let Ok(val) = env::var("ARCEE_API_KEY") {
+            self.llm.providers.arcee.api_key = val;
         }
 
         // Vertex AI configuration
@@ -1144,8 +1152,11 @@ pub struct LlmConfig {
     pub model: String,
     pub temperature: f32,
     pub max_tokens: u32,
+    #[serde(default)]
     pub fallback: FallbackConfig,
+    #[serde(default)]
     pub providers: ProviderConfigs,
+    #[serde(default)]
     pub routing: RoutingConfig,
 }
 
@@ -1184,21 +1195,38 @@ impl Default for FallbackConfig {
 /// Provider-specific configurations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfigs {
+    #[serde(default)]
     pub anthropic: ProviderConfig,
+    #[serde(default)]
     pub openai: ProviderConfig,
+    #[serde(default)]
     pub ollama: ProviderConfig,
+    #[serde(default)]
     pub gemini: ProviderConfig,
+    #[serde(default)]
     pub groq: ProviderConfig,
+    #[serde(default)]
     pub azure: ProviderConfig,
+    #[serde(default)]
     pub cohere: ProviderConfig,
+    #[serde(default)]
     pub mistral: ProviderConfig,
+    #[serde(default)]
     pub openrouter: ProviderConfig,
+    #[serde(default)]
     pub together: ProviderConfig,
+    #[serde(default)]
     pub huggingface: ProviderConfig,
+    #[serde(default)]
     pub deepseek: ProviderConfig,
+    #[serde(default)]
     pub perplexity: ProviderConfig,
+    #[serde(default)]
     pub ai21: ProviderConfig,
+    #[serde(default)]
     pub vertex_ai: VertexAiConfig,
+    #[serde(default)]
+    pub arcee: ProviderConfig,
 }
 
 impl Default for ProviderConfigs {
@@ -1223,6 +1251,10 @@ impl Default for ProviderConfigs {
             groq: ProviderConfig {
                 api_key: "${GROQ_API_KEY}".to_string(),
                 base_url: "https://api.groq.com/openai/v1".to_string(),
+            },
+            arcee: ProviderConfig {
+                api_key: "${ARCEE_API_KEY}".to_string(),
+                base_url: "https://api.arcee.ai".to_string(),
             },
             azure: ProviderConfig {
                 api_key: "${AZURE_OPENAI_API_KEY}".to_string(),
@@ -1296,6 +1328,7 @@ impl Default for VertexAiConfig {
 
 /// Individual provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct ProviderConfig {
     pub api_key: String,
     pub base_url: String,
@@ -1421,6 +1454,7 @@ pub struct ProviderRoute {
 pub struct LspConfig {
     pub enabled: bool,
     pub timeout: u64,
+    #[serde(default)]
     pub servers: Vec<LanguageServerConfig>,
 }
 
@@ -1455,20 +1489,27 @@ pub struct LanguageServerConfig {
 /// Safety configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SafetyConfig {
+    #[serde(default = "default_protected_paths")]
     pub protected_paths: Vec<String>,
     pub max_file_size_mb: u64,
+    #[serde(default)]
     pub forbidden_commands: Vec<String>,
+    #[serde(default)]
     pub require_approval_for: Vec<String>,
+}
+
+fn default_protected_paths() -> Vec<String> {
+    vec![
+        ".agent/core/**".to_string(),
+        ".agent/safety/**".to_string(),
+        ".agent/auth/**".to_string(),
+    ]
 }
 
 impl Default for SafetyConfig {
     fn default() -> Self {
         Self {
-            protected_paths: vec![
-                ".agent/core/**".to_string(),
-                ".agent/safety/**".to_string(),
-                ".agent/auth/**".to_string(),
-            ],
+            protected_paths: default_protected_paths(),
             max_file_size_mb: 10,
             forbidden_commands: vec!["rm -rf /".to_string(), "dd if=/dev/zero".to_string()],
             require_approval_for: vec!["delete".to_string(), "modify_protected".to_string(), "git_push".to_string()],
@@ -1497,6 +1538,7 @@ impl Default for ToolConfig {
 pub struct GitToolConfig {
     pub enabled: bool,
     pub auto_commit: bool,
+    #[serde(default)]
     pub commit_prefix: String,
 }
 
@@ -1516,6 +1558,7 @@ pub struct TestToolConfig {
     pub enabled: bool,
     pub framework: String,
     pub auto_run: bool,
+    #[serde(default)]
     pub fail_on_error: bool,
 }
 
@@ -1540,14 +1583,19 @@ pub struct SelfCompileConfig {
     /// Number of backups to keep
     pub backup_count: usize,
     /// Build profile to use (dev/release)
+    #[serde(default)]
     pub build_profile: String,
     /// Additional cargo build arguments
+    #[serde(default)]
     pub build_args: Vec<String>,
     /// Timeout for compilation in seconds
+    #[serde(default)]
     pub compile_timeout_seconds: u64,
     /// Verify binary before restart
+    #[serde(default)]
     pub verify_before_restart: bool,
     /// Rollback on restart failure
+    #[serde(default)]
     pub rollback_on_failure: bool,
 }
 
@@ -1661,5 +1709,38 @@ mod tests {
         assert!(config.self_compile.auto_restart);
         assert_eq!(config.self_compile.build_profile, "release");
         assert!(config.self_compile.backup_count > 0);
+    }
+
+    #[test]
+    fn test_openrouter_config() {
+        use super::*;
+        use serde_yaml;
+        
+        let yaml = r#"
+llm:
+  provider: openrouter
+  model: anthropic/claude-3-sonnet-20250219
+  temperature: 0.1
+  max_tokens: 4096
+
+providers:
+  openrouter:
+    api_key: "test-key"
+
+lsp:
+  max_workers: 4
+
+safety:
+  enabled: true
+  strictness: high
+"#;
+
+        let config: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.llm.provider, "openrouter");
+        assert_eq!(config.llm.model, "anthropic/claude-3-sonnet-20250219");
+        assert_eq!(config.llm.providers.openrouter.api_key, "test-key");
+        assert_eq!(config.lsp.max_workers, 4);
+        assert_eq!(config.safety.enabled, true);
+        assert_eq!(config.safety.strictness, "high");
     }
 }

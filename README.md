@@ -33,7 +33,7 @@ The Self-Developing Coding Agent is an autonomous software development assistant
 
 ### Key Design Principles
 
-1. **Provider Agnostic**: Supports multiple LLM providers (OpenAI, Anthropic, Ollama)
+1. **Provider Agnostic**: Supports multiple LLM providers (OpenAI, Anthropic, Ollama, OpenRouter, Arcee)
 2. **Language Agnostic**: Multi-language LSP support for diverse codebases
 3. **Tool Extensible**: Plugin-based tool integration framework
 4. **Safety First**: Strict guardrails for core system protection
@@ -103,7 +103,7 @@ For detailed architecture information, see [`docs/ARCHITECTURE.md`](docs/ARCHITE
 
 - **Rust**: Version 1.75 or later
 - **Cargo**: Included with Rust
-- **LLM API Key**: OpenAI, Anthropic, or Ollama for local models
+- **LLM API Key**: OpenAI, Anthropic, Ollama (local), OpenRouter, or Arcee
 - **Optional**: Language servers for your target languages (rust-analyzer, typescript-language-server, etc.)
 
 ### Installation
@@ -143,14 +143,14 @@ safety_checks = true
 max_modifications_per_session = 10
 
 [llm]
-provider = "anthropic"  # or "openai", "ollama"
-model = "claude-3-5-sonnet-20241022"
+provider = "openrouter"  # or "anthropic", "openai", "ollama", "arcee"
+model = "arcee-ai/trinity-large-preview:free"  # or "claude-3-5-sonnet-20241022", "gpt-4o"
 temperature = 0.7
 max_tokens = 4096
 
-[llm.providers.anthropic]
-api_key = "${ANTHROPIC_API_KEY}"
-base_url = "https://api.anthropic.com"
+[llm.providers.openrouter]
+api_key = "${OPENROUTER_API_KEY}"
+base_url = "https://openrouter.ai/api/v1"
 
 [lsp]
 enabled = true

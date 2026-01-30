@@ -1,0 +1,17 @@
+
+llm:
+  provider: openrouter
+  model: anthropic/claude-3-sonnet-20250219
+  temperature: 0.1
+  max_tokens: 4096
+
+providers:
+  openrouter:
+    api_key: "test-key"
+
+lsp:
+  max_workers: 4
+
+safety:
+  enabled: true
+  strictness: high
