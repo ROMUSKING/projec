@@ -7,6 +7,20 @@ use common::{async_trait, Error, Result};
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 
+/// Log a prompt being sent to the model
+pub fn log_prompt(provider: &str, model: &str, prompt: &str) {
+    eprintln!("\n=== LLM REQUEST [{} - {}] ===", provider, model);
+    eprintln!("{}", prompt);
+    eprintln!("=== END REQUEST ===\n");
+}
+
+/// Log a response received from the model
+pub fn log_response(provider: &str, model: &str, response: &str) {
+    eprintln!("\n=== LLM RESPONSE [{} - {}] ===", provider, model);
+    eprintln!("{}", response);
+    eprintln!("=== END RESPONSE ===\n");
+}
+
 /// LLM Gateway trait for provider abstraction
 #[async_trait]
 pub trait LlmGateway: Send + Sync {
@@ -96,6 +110,8 @@ impl LlmGateway for OpenAiGateway {
     }
 
     async fn generate(&self, prompt: &str) -> Result<super::GenerationResult> {
+        log_prompt("OpenAI", &self.model, prompt);
+
         let request = serde_json::json!({
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
@@ -130,6 +146,8 @@ impl LlmGateway for OpenAiGateway {
             .as_str()
             .unwrap_or("unknown")
             .to_string();
+
+        log_response("OpenAI", &self.model, &content);
 
         Ok(super::GenerationResult {
             content,
@@ -329,6 +347,8 @@ impl LlmGateway for OpenRouterGateway {
     }
 
     async fn generate(&self, prompt: &str) -> Result<super::GenerationResult> {
+        log_prompt("OpenRouter", &self.model, prompt);
+
         let request = serde_json::json!({
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
@@ -365,6 +385,8 @@ impl LlmGateway for OpenRouterGateway {
             .as_str()
             .unwrap_or("unknown")
             .to_string();
+
+        log_response("OpenRouter", &self.model, &content);
 
         Ok(super::GenerationResult {
             content,
@@ -452,6 +474,8 @@ impl LlmGateway for ArceeGateway {
     }
 
     async fn generate(&self, prompt: &str) -> Result<super::GenerationResult> {
+        log_prompt("Arcee", &self.model, prompt);
+
         let request = serde_json::json!({
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
@@ -486,6 +510,8 @@ impl LlmGateway for ArceeGateway {
             .as_str()
             .unwrap_or("unknown")
             .to_string();
+
+        log_response("Arcee", &self.model, &content);
 
         Ok(super::GenerationResult {
             content,
@@ -556,6 +582,8 @@ impl LlmGateway for MockGateway {
     }
 
     async fn generate(&self, prompt: &str) -> Result<super::GenerationResult> {
+        log_prompt("Mock", "mock-model", prompt);
+
         // Simple heuristic response generation for testing
         let content = if prompt.contains("plan") {
             "1. Analyze the codebase\n2. Identify issues\n3. Apply fixes".to_string()
@@ -564,6 +592,8 @@ impl LlmGateway for MockGateway {
         } else {
             format!("Mock response to: {}", prompt)
         };
+
+        log_response("Mock", "mock-model", &content);
 
         Ok(super::GenerationResult {
             content,

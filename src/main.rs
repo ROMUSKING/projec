@@ -140,19 +140,38 @@ async fn load_config(cli: &Cli) -> Result<agent_config::AgentConfig> {
 /// Initialize the agent with all modules
 async fn initialize_agent(config: agent_config::AgentConfig) -> Result<agent_core::Agent> {
     use agent_core::*;
+    use std::sync::Arc;
 
     // Create the agent
     let mut agent = Agent::new(config.clone());
 
-    // Create and configure orchestrator
+    // Create and configure the intelligence engine
+    let gateway_factory = intelligence::gateway::GatewayFactory::new();
+    let gateway = gateway_factory.create(
+        &config.llm.provider,
+        Some(config.current_api_key().to_string()),
+        config.llm.model.clone(),
+    )?;
+    let intelligence_engine = Arc::new(intelligence::IntelligenceEngine::new(gateway));
+
+    // Create and configure the analysis engine
+    let analysis_engine = Arc::new(analysis::AnalysisEngine::new());
+
+    // Create and configure the knowledge engine
+    let knowledge_engine = Arc::new(knowledge::KnowledgeEngine::new());
+
+    // Create and configure the tool framework
+    let tools_framework = Arc::new(tools::ToolFramework::new());
+
+    // Create and configure orchestrator with all engines
     let orchestrator = orchestrator::Orchestrator::new()
-        .with_config(config.clone());
+        .with_config(config.clone())
+        .with_intelligence(intelligence_engine)
+        .with_analysis(analysis_engine)
+        .with_knowledge(knowledge_engine)
+        .with_tools(tools_framework);
 
     agent = agent.with_orchestrator(orchestrator);
-
-    // Register modules based on configuration
-    // Note: In a full implementation, these would be properly initialized
-    // with their respective dependencies
 
     info!("Agent initialization complete");
     

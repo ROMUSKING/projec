@@ -3,7 +3,7 @@
 //! This module provides integration with Google Cloud Vertex AI,
 //! supporting multiple models including Gemini, Claude, and Llama.
 
-use crate::gateway::{LlmGateway, ModelCapability, ModelInfo, StreamChunk, StreamResult};
+use crate::gateway::{log_prompt, log_response, LlmGateway, ModelCapability, ModelInfo, StreamChunk, StreamResult};
 use common::{async_trait, Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -103,6 +103,8 @@ impl LlmGateway for VertexAiGateway {
     }
 
     async fn generate(&self, prompt: &str) -> Result<crate::GenerationResult> {
+        log_prompt("VertexAI", &self.model, prompt);
+
         let url = self.build_api_url();
 
         let request_body = serde_json::json!({
@@ -152,6 +154,8 @@ impl LlmGateway for VertexAiGateway {
         let tokens_used = response_json["usageMetadata"]["totalTokenCount"]
             .as_u64()
             .unwrap_or(0) as u32;
+
+        log_response("VertexAI", &self.model, &content);
 
         Ok(crate::GenerationResult {
             content,
