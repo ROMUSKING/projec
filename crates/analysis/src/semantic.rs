@@ -8,7 +8,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::fs;
 use tracing::{debug, warn};
 
@@ -223,7 +223,8 @@ impl SemanticAnalyzer {
         let mut deps = Vec::new();
         
         // Extract use statements
-        let use_regex = Regex::new(r"use\s+([\w:]+)").unwrap();
+        static USE_REGEX: OnceLock<Regex> = OnceLock::new();
+        let use_regex = USE_REGEX.get_or_init(|| Regex::new(r"use\s+([\w:]+)").unwrap());
         for cap in use_regex.captures_iter(content) {
             let name = cap[1].to_string();
             deps.push(super::Dependency {
@@ -235,7 +236,8 @@ impl SemanticAnalyzer {
         }
 
         // Extract extern crate
-        let extern_regex = Regex::new(r"extern\s+crate\s+(\w+)").unwrap();
+        static EXTERN_REGEX: OnceLock<Regex> = OnceLock::new();
+        let extern_regex = EXTERN_REGEX.get_or_init(|| Regex::new(r"extern\s+crate\s+(\w+)").unwrap());
         for cap in extern_regex.captures_iter(content) {
             deps.push(super::Dependency {
                 name: cap[1].to_string(),
@@ -252,7 +254,8 @@ impl SemanticAnalyzer {
         let mut deps = Vec::new();
         
         // ES6 imports
-        let import_regex = Regex::new(r#"import\s+.*?\s+from\s+['"]([^'"]+)['"]|import\s+['"]([^'"]+)['"]"#).unwrap();
+        static IMPORT_REGEX: OnceLock<Regex> = OnceLock::new();
+        let import_regex = IMPORT_REGEX.get_or_init(|| Regex::new(r#"import\s+.*?\s+from\s+['"]([^'"]+)['"]|import\s+['"]([^'"]+)['"]"#).unwrap());
         for cap in import_regex.captures_iter(content) {
             let name = cap.get(1).or(cap.get(2)).map(|m| m.as_str().to_string()).unwrap_or_default();
             if !name.is_empty() {
@@ -266,7 +269,8 @@ impl SemanticAnalyzer {
         }
 
         // CommonJS requires
-        let require_regex = Regex::new(r#"require\s*\(\s*['"]([^'"]+)['"]\s*\)"#).unwrap();
+        static REQUIRE_REGEX: OnceLock<Regex> = OnceLock::new();
+        let require_regex = REQUIRE_REGEX.get_or_init(|| Regex::new(r#"require\s*\(\s*['"]([^'"]+)['"]\s*\)"#).unwrap());
         for cap in require_regex.captures_iter(content) {
             deps.push(super::Dependency {
                 name: cap[1].to_string(),
@@ -283,7 +287,8 @@ impl SemanticAnalyzer {
         let mut deps = Vec::new();
         
         // Import statements
-        let import_regex = Regex::new(r"(?:from\s+(\S+)\s+)?import\s+(.+)").unwrap();
+        static IMPORT_REGEX: OnceLock<Regex> = OnceLock::new();
+        let import_regex = IMPORT_REGEX.get_or_init(|| Regex::new(r"(?:from\s+(\S+)\s+)?import\s+(.+)").unwrap());
         for cap in import_regex.captures_iter(content) {
             let module = cap.get(1).map(|m| m.as_str().to_string())
                 .or_else(|| cap.get(2).map(|m| m.as_str().split(',').next().unwrap().trim().to_string()))
@@ -306,7 +311,8 @@ impl SemanticAnalyzer {
         let mut deps = Vec::new();
         
         // Import statements
-        let import_regex = Regex::new(r#"import\s+(?:\(\s*)?["`]([^"`]+)["`]"#).unwrap();
+        static IMPORT_REGEX: OnceLock<Regex> = OnceLock::new();
+        let import_regex = IMPORT_REGEX.get_or_init(|| Regex::new(r#"import\s+(?:\(\s*)?["`]([^"`]+)["`]"#).unwrap());
         for cap in import_regex.captures_iter(content) {
             let import_path = cap[1].to_string();
             deps.push(super::Dependency {
@@ -336,8 +342,10 @@ impl SemanticAnalyzer {
         let mut results = Vec::new();
         
         // Look for functions/structs that are private and not used
-        let fn_regex = Regex::new(r"fn\s+(\w+)").unwrap();
-        let struct_regex = Regex::new(r"struct\s+(\w+)").unwrap();
+        static FN_REGEX: OnceLock<Regex> = OnceLock::new();
+        let fn_regex = FN_REGEX.get_or_init(|| Regex::new(r"fn\s+(\w+)").unwrap());
+        static STRUCT_REGEX: OnceLock<Regex> = OnceLock::new();
+        let _struct_regex = STRUCT_REGEX.get_or_init(|| Regex::new(r"struct\s+(\w+)").unwrap());
         
         // This is a simplified check - real dead code detection would need full project analysis
         for cap in fn_regex.captures_iter(content) {
@@ -1183,4 +1191,5 @@ import * as utils from './utils';
         assert!(metrics.vocabulary_size > 0.0);
         assert!(metrics.volume > 0.0);
     }
+
 }
