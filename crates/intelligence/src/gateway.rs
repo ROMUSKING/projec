@@ -493,7 +493,8 @@ impl ArceeGateway {
 #[async_trait]
 impl LlmGateway for ArceeGateway {
     async fn initialize(&mut self) -> Result<()> {
-        // TODO: Validate API key and connection
+        // Validate API key and connection
+        self.list_models().await.map_err(|e| Error::Config(format!("Failed to validate Arcee connection: {}", e)))?;
         Ok(())
     }
 
@@ -586,8 +587,10 @@ impl LlmGateway for ArceeGateway {
     }
 
     async fn health_check(&self) -> Result<bool> {
-        // TODO: Check Arcee API health
-        Ok(true)
+        match self.list_models().await {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
     }
 }
 
@@ -704,5 +707,29 @@ impl GatewayFactory {
 impl Default for GatewayFactory {
     fn default() -> Self {
         Self::new()
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_arcee_initialization_failure() {
+        let client = reqwest::Client::new();
+        let mut gateway = ArceeGateway::new(
+            "dummy_key".to_string(),
+            "arcee-test".to_string(),
+            client
+        );
+
+        // Should fail because key is invalid/mocked and we can't reach real API
+        let result = gateway.initialize().await;
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        match err {
+            Error::Config(msg) => assert!(msg.contains("Failed to validate Arcee connection")),
+            _ => panic!("Expected Error::Config, got {:?}", err),
+        }
     }
 }
