@@ -100,7 +100,9 @@ impl OpenAiGateway {
 #[async_trait]
 impl LlmGateway for OpenAiGateway {
     async fn initialize(&mut self) -> Result<()> {
-        // TODO: Validate API key and connection
+        if !self.health_check().await? {
+            return Err(Error::ExternalService("OpenAI health check failed".to_string()));
+        }
         Ok(())
     }
 
@@ -193,8 +195,14 @@ impl LlmGateway for OpenAiGateway {
     }
 
     async fn health_check(&self) -> Result<bool> {
-        // TODO: Check OpenAI API health
-        Ok(true)
+        let response = self.client
+            .get(format!("{}/models", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await
+            .map_err(|e| Error::ExternalService(format!("OpenAI health check request failed: {}", e)))?;
+
+        Ok(response.status().is_success())
     }
 }
 
@@ -704,5 +712,30 @@ impl GatewayFactory {
 impl Default for GatewayFactory {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_openai_initialize_health_check_failure() {
+        let client = reqwest::Client::new();
+        let gateway = OpenAiGateway::new(
+            "test-key".to_string(),
+            "gpt-4".to_string(),
+            client
+        ).with_base_url("http://127.0.0.1:0".to_string()); // Unreachable port
+
+        let result = gateway.health_check().await;
+
+        // Should return Err because the request fails to connect
+        assert!(result.is_err());
+
+        // Initialize should also fail
+        let mut gateway = gateway;
+        let init_result = gateway.initialize().await;
+        assert!(init_result.is_err());
     }
 }
