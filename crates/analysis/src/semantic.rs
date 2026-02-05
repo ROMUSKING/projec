@@ -8,7 +8,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::fs;
 use tracing::{debug, warn};
 
@@ -222,8 +222,11 @@ impl SemanticAnalyzer {
     fn extract_rust_dependencies(&self, content: &str) -> Vec<super::Dependency> {
         let mut deps = Vec::new();
         
+        static USE_REGEX: OnceLock<Regex> = OnceLock::new();
+        static EXTERN_REGEX: OnceLock<Regex> = OnceLock::new();
+
         // Extract use statements
-        let use_regex = Regex::new(r"use\s+([\w:]+)").unwrap();
+        let use_regex = USE_REGEX.get_or_init(|| Regex::new(r"use\s+([\w:]+)").unwrap());
         for cap in use_regex.captures_iter(content) {
             let name = cap[1].to_string();
             deps.push(super::Dependency {
@@ -235,7 +238,7 @@ impl SemanticAnalyzer {
         }
 
         // Extract extern crate
-        let extern_regex = Regex::new(r"extern\s+crate\s+(\w+)").unwrap();
+        let extern_regex = EXTERN_REGEX.get_or_init(|| Regex::new(r"extern\s+crate\s+(\w+)").unwrap());
         for cap in extern_regex.captures_iter(content) {
             deps.push(super::Dependency {
                 name: cap[1].to_string(),
@@ -251,8 +254,11 @@ impl SemanticAnalyzer {
     fn extract_js_dependencies(&self, content: &str) -> Vec<super::Dependency> {
         let mut deps = Vec::new();
         
+        static IMPORT_REGEX: OnceLock<Regex> = OnceLock::new();
+        static REQUIRE_REGEX: OnceLock<Regex> = OnceLock::new();
+
         // ES6 imports
-        let import_regex = Regex::new(r#"import\s+.*?\s+from\s+['"]([^'"]+)['"]|import\s+['"]([^'"]+)['"]"#).unwrap();
+        let import_regex = IMPORT_REGEX.get_or_init(|| Regex::new(r#"import\s+.*?\s+from\s+['"]([^'"]+)['"]|import\s+['"]([^'"]+)['"]"#).unwrap());
         for cap in import_regex.captures_iter(content) {
             let name = cap.get(1).or(cap.get(2)).map(|m| m.as_str().to_string()).unwrap_or_default();
             if !name.is_empty() {
@@ -266,7 +272,7 @@ impl SemanticAnalyzer {
         }
 
         // CommonJS requires
-        let require_regex = Regex::new(r#"require\s*\(\s*['"]([^'"]+)['"]\s*\)"#).unwrap();
+        let require_regex = REQUIRE_REGEX.get_or_init(|| Regex::new(r#"require\s*\(\s*['"]([^'"]+)['"]\s*\)"#).unwrap());
         for cap in require_regex.captures_iter(content) {
             deps.push(super::Dependency {
                 name: cap[1].to_string(),
@@ -282,8 +288,10 @@ impl SemanticAnalyzer {
     fn extract_python_dependencies(&self, content: &str) -> Vec<super::Dependency> {
         let mut deps = Vec::new();
         
+        static IMPORT_REGEX: OnceLock<Regex> = OnceLock::new();
+
         // Import statements
-        let import_regex = Regex::new(r"(?:from\s+(\S+)\s+)?import\s+(.+)").unwrap();
+        let import_regex = IMPORT_REGEX.get_or_init(|| Regex::new(r"(?:from\s+(\S+)\s+)?import\s+(.+)").unwrap());
         for cap in import_regex.captures_iter(content) {
             let module = cap.get(1).map(|m| m.as_str().to_string())
                 .or_else(|| cap.get(2).map(|m| m.as_str().split(',').next().unwrap().trim().to_string()))
@@ -305,8 +313,10 @@ impl SemanticAnalyzer {
     fn extract_go_dependencies(&self, content: &str) -> Vec<super::Dependency> {
         let mut deps = Vec::new();
         
+        static IMPORT_REGEX: OnceLock<Regex> = OnceLock::new();
+
         // Import statements
-        let import_regex = Regex::new(r#"import\s+(?:\(\s*)?["`]([^"`]+)["`]"#).unwrap();
+        let import_regex = IMPORT_REGEX.get_or_init(|| Regex::new(r#"import\s+(?:\(\s*)?["`]([^"`]+)["`]"#).unwrap());
         for cap in import_regex.captures_iter(content) {
             let import_path = cap[1].to_string();
             deps.push(super::Dependency {
@@ -335,9 +345,12 @@ impl SemanticAnalyzer {
     fn find_rust_dead_code(&self, content: &str) -> Vec<DeadCodeResult> {
         let mut results = Vec::new();
         
+        static FN_REGEX: OnceLock<Regex> = OnceLock::new();
+        static STRUCT_REGEX: OnceLock<Regex> = OnceLock::new();
+
         // Look for functions/structs that are private and not used
-        let fn_regex = Regex::new(r"fn\s+(\w+)").unwrap();
-        let struct_regex = Regex::new(r"struct\s+(\w+)").unwrap();
+        let fn_regex = FN_REGEX.get_or_init(|| Regex::new(r"fn\s+(\w+)").unwrap());
+        let _struct_regex = STRUCT_REGEX.get_or_init(|| Regex::new(r"struct\s+(\w+)").unwrap());
         
         // This is a simplified check - real dead code detection would need full project analysis
         for cap in fn_regex.captures_iter(content) {
@@ -459,8 +472,13 @@ impl LanguageParser for RustParser {
     fn parse_symbols(&self, content: &str) -> Vec<ParsedSymbol> {
         let mut symbols = Vec::new();
         
+        static FN_REGEX: OnceLock<Regex> = OnceLock::new();
+        static STRUCT_REGEX: OnceLock<Regex> = OnceLock::new();
+        static ENUM_REGEX: OnceLock<Regex> = OnceLock::new();
+        static TRAIT_REGEX: OnceLock<Regex> = OnceLock::new();
+
         // Parse functions
-        let fn_regex = Regex::new(r"(?:(pub)\s+)?fn\s+(\w+)").unwrap();
+        let fn_regex = FN_REGEX.get_or_init(|| Regex::new(r"(?:(pub)\s+)?fn\s+(\w+)").unwrap());
         for (i, line) in content.lines().enumerate() {
             if let Some(cap) = fn_regex.captures(line) {
                 symbols.push(ParsedSymbol {
@@ -474,7 +492,7 @@ impl LanguageParser for RustParser {
         }
 
         // Parse structs
-        let struct_regex = Regex::new(r"(?:(pub)\s+)?struct\s+(\w+)").unwrap();
+        let struct_regex = STRUCT_REGEX.get_or_init(|| Regex::new(r"(?:(pub)\s+)?struct\s+(\w+)").unwrap());
         for (i, line) in content.lines().enumerate() {
             if let Some(cap) = struct_regex.captures(line) {
                 symbols.push(ParsedSymbol {
@@ -488,7 +506,7 @@ impl LanguageParser for RustParser {
         }
 
         // Parse enums
-        let enum_regex = Regex::new(r"(?:(pub)\s+)?enum\s+(\w+)").unwrap();
+        let enum_regex = ENUM_REGEX.get_or_init(|| Regex::new(r"(?:(pub)\s+)?enum\s+(\w+)").unwrap());
         for (i, line) in content.lines().enumerate() {
             if let Some(cap) = enum_regex.captures(line) {
                 symbols.push(ParsedSymbol {
@@ -502,7 +520,7 @@ impl LanguageParser for RustParser {
         }
 
         // Parse traits
-        let trait_regex = Regex::new(r"(?:(pub)\s+)?trait\s+(\w+)").unwrap();
+        let trait_regex = TRAIT_REGEX.get_or_init(|| Regex::new(r"(?:(pub)\s+)?trait\s+(\w+)").unwrap());
         for (i, line) in content.lines().enumerate() {
             if let Some(cap) = trait_regex.captures(line) {
                 symbols.push(ParsedSymbol {
@@ -521,7 +539,9 @@ impl LanguageParser for RustParser {
     fn parse_imports(&self, content: &str) -> Vec<super::Import> {
         let mut imports = Vec::new();
         
-        let use_regex = Regex::new(r"use\s+([\w:]+)(?:::\{([^}]+)\})?;").unwrap();
+        static USE_REGEX: OnceLock<Regex> = OnceLock::new();
+
+        let use_regex = USE_REGEX.get_or_init(|| Regex::new(r"use\s+([\w:]+)(?:::\{([^}]+)\})?;").unwrap());
         for cap in use_regex.captures_iter(content) {
             let source = cap[1].to_string();
             let items = cap.get(2)
@@ -541,8 +561,10 @@ impl LanguageParser for RustParser {
     fn parse_exports(&self, content: &str) -> Vec<super::Export> {
         let mut exports = Vec::new();
         
+        static PUB_REGEX: OnceLock<Regex> = OnceLock::new();
+
         // Find all pub items
-        let pub_regex = Regex::new(r"pub\s+(?:\([^)]+\)\s+)?(\w+)\s+(\w+)").unwrap();
+        let pub_regex = PUB_REGEX.get_or_init(|| Regex::new(r"pub\s+(?:\([^)]+\)\s+)?(\w+)\s+(\w+)").unwrap());
         for cap in pub_regex.captures_iter(content) {
             let kind = match &cap[1] {
                 "fn" => super::SymbolKind::Function,
@@ -591,8 +613,12 @@ impl LanguageParser for TypeScriptParser {
     fn parse_symbols(&self, content: &str) -> Vec<ParsedSymbol> {
         let mut symbols = Vec::new();
         
+        static FN_REGEX: OnceLock<Regex> = OnceLock::new();
+        static CLASS_REGEX: OnceLock<Regex> = OnceLock::new();
+        static INTERFACE_REGEX: OnceLock<Regex> = OnceLock::new();
+
         // Parse functions
-        let fn_regex = Regex::new(r"(?:export\s+)?(?:async\s+)?function\s+(\w+)").unwrap();
+        let fn_regex = FN_REGEX.get_or_init(|| Regex::new(r"(?:export\s+)?(?:async\s+)?function\s+(\w+)").unwrap());
         for (i, line) in content.lines().enumerate() {
             if let Some(cap) = fn_regex.captures(line) {
                 symbols.push(ParsedSymbol {
@@ -606,7 +632,7 @@ impl LanguageParser for TypeScriptParser {
         }
 
         // Parse classes
-        let class_regex = Regex::new(r"(?:export\s+)?class\s+(\w+)").unwrap();
+        let class_regex = CLASS_REGEX.get_or_init(|| Regex::new(r"(?:export\s+)?class\s+(\w+)").unwrap());
         for (i, line) in content.lines().enumerate() {
             if let Some(cap) = class_regex.captures(line) {
                 symbols.push(ParsedSymbol {
@@ -620,7 +646,7 @@ impl LanguageParser for TypeScriptParser {
         }
 
         // Parse interfaces
-        let interface_regex = Regex::new(r"(?:export\s+)?interface\s+(\w+)").unwrap();
+        let interface_regex = INTERFACE_REGEX.get_or_init(|| Regex::new(r"(?:export\s+)?interface\s+(\w+)").unwrap());
         for (i, line) in content.lines().enumerate() {
             if let Some(cap) = interface_regex.captures(line) {
                 symbols.push(ParsedSymbol {
@@ -639,8 +665,11 @@ impl LanguageParser for TypeScriptParser {
     fn parse_imports(&self, content: &str) -> Vec<super::Import> {
         let mut imports = Vec::new();
         
+        static IMPORT_REGEX: OnceLock<Regex> = OnceLock::new();
+        static NAMESPACE_IMPORT_REGEX: OnceLock<Regex> = OnceLock::new();
+
         // ES6 imports
-        let import_regex = Regex::new(r#"import\s+(?:(\w+)\s*,?\s*)?(?:\{\s*([^}]*)\s*\})?\s*from\s+['"]([^'"]+)['"];?"#).unwrap();
+        let import_regex = IMPORT_REGEX.get_or_init(|| Regex::new(r#"import\s+(?:(\w+)\s*,?\s*)?(?:\{\s*([^}]*)\s*\})?\s*from\s+['"]([^'"]+)['"];?"#).unwrap());
         for cap in import_regex.captures_iter(content) {
             let source = cap[3].to_string();
             let default = cap.get(1).map(|m| m.as_str().to_string());
@@ -661,7 +690,7 @@ impl LanguageParser for TypeScriptParser {
         }
 
         // Namespace imports
-        let namespace_import_regex = Regex::new(r#"import\s+\*\s+as\s+(\w+)\s+from\s+['"]([^'"]+)['"];?"#).unwrap();
+        let namespace_import_regex = NAMESPACE_IMPORT_REGEX.get_or_init(|| Regex::new(r#"import\s+\*\s+as\s+(\w+)\s+from\s+['"]([^'"]+)['"];?"#).unwrap());
         for cap in namespace_import_regex.captures_iter(content) {
             imports.push(super::Import {
                 source: cap[2].to_string(),
@@ -676,8 +705,11 @@ impl LanguageParser for TypeScriptParser {
     fn parse_exports(&self, content: &str) -> Vec<super::Export> {
         let mut exports = Vec::new();
         
+        static EXPORT_REGEX: OnceLock<Regex> = OnceLock::new();
+        static REEXPORT_REGEX: OnceLock<Regex> = OnceLock::new();
+
         // Named exports
-        let export_regex = Regex::new(r"export\s+(?:const|let|var|function|class|interface|type|enum)\s+(\w+)").unwrap();
+        let export_regex = EXPORT_REGEX.get_or_init(|| Regex::new(r"export\s+(?:const|let|var|function|class|interface|type|enum)\s+(\w+)").unwrap());
         for cap in export_regex.captures_iter(content) {
             exports.push(super::Export {
                 name: cap[1].to_string(),
@@ -687,7 +719,7 @@ impl LanguageParser for TypeScriptParser {
         }
 
         // Export { ... } from '...'
-        let reexport_regex = Regex::new(r#"export\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"];?"#).unwrap();
+        let reexport_regex = REEXPORT_REGEX.get_or_init(|| Regex::new(r#"export\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"];?"#).unwrap());
         for cap in reexport_regex.captures_iter(content) {
             for name in cap[1].split(',').map(|s| s.trim()) {
                 exports.push(super::Export {
@@ -726,8 +758,11 @@ impl LanguageParser for PythonParser {
     fn parse_symbols(&self, content: &str) -> Vec<ParsedSymbol> {
         let mut symbols = Vec::new();
         
+        static FN_REGEX: OnceLock<Regex> = OnceLock::new();
+        static CLASS_REGEX: OnceLock<Regex> = OnceLock::new();
+
         // Parse functions
-        let fn_regex = Regex::new(r"(?:async\s+)?def\s+(\w+)").unwrap();
+        let fn_regex = FN_REGEX.get_or_init(|| Regex::new(r"(?:async\s+)?def\s+(\w+)").unwrap());
         for (i, line) in content.lines().enumerate() {
             if let Some(cap) = fn_regex.captures(line) {
                 // Check if it's a method (indented)
@@ -743,7 +778,7 @@ impl LanguageParser for PythonParser {
         }
 
         // Parse classes
-        let class_regex = Regex::new(r"class\s+(\w+)").unwrap();
+        let class_regex = CLASS_REGEX.get_or_init(|| Regex::new(r"class\s+(\w+)").unwrap());
         for (i, line) in content.lines().enumerate() {
             if let Some(cap) = class_regex.captures(line) {
                 let is_public = !cap[1].starts_with('_');
@@ -763,8 +798,11 @@ impl LanguageParser for PythonParser {
     fn parse_imports(&self, content: &str) -> Vec<super::Import> {
         let mut imports = Vec::new();
         
+        static FROM_IMPORT_REGEX: OnceLock<Regex> = OnceLock::new();
+        static IMPORT_REGEX: OnceLock<Regex> = OnceLock::new();
+
         // from X import Y
-        let from_import_regex = Regex::new(r"from\s+(\S+)\s+import\s+(.+)").unwrap();
+        let from_import_regex = FROM_IMPORT_REGEX.get_or_init(|| Regex::new(r"from\s+(\S+)\s+import\s+(.+)").unwrap());
         for cap in from_import_regex.captures_iter(content) {
             let source = cap[1].to_string();
             let items: Vec<String> = cap[2].split(',').map(|s| s.trim().to_string()).collect();
@@ -777,7 +815,7 @@ impl LanguageParser for PythonParser {
         }
 
         // import X
-        let import_regex = Regex::new(r"^import\s+(.+)").unwrap();
+        let import_regex = IMPORT_REGEX.get_or_init(|| Regex::new(r"^import\s+(.+)").unwrap());
         for cap in import_regex.captures_iter(content) {
             let items: Vec<String> = cap[1].split(',').map(|s| s.trim().to_string()).collect();
             
@@ -794,8 +832,10 @@ impl LanguageParser for PythonParser {
     fn parse_exports(&self, content: &str) -> Vec<super::Export> {
         let mut exports = Vec::new();
         
+        static ALL_REGEX: OnceLock<Regex> = OnceLock::new();
+
         // In Python, exports are typically defined in __all__
-        let all_regex = Regex::new(r"__all__\s*=\s*\[([^\]]+)\]").unwrap();
+        let all_regex = ALL_REGEX.get_or_init(|| Regex::new(r"__all__\s*=\s*\[([^\]]+)\]").unwrap());
         if let Some(cap) = all_regex.captures(content) {
             for name in cap[1].split(',').map(|s| s.trim().trim_matches('"').trim_matches('\'')) {
                 if !name.is_empty() {
@@ -836,8 +876,11 @@ impl LanguageParser for GoParser {
     fn parse_symbols(&self, content: &str) -> Vec<ParsedSymbol> {
         let mut symbols = Vec::new();
         
+        static FN_REGEX: OnceLock<Regex> = OnceLock::new();
+        static TYPE_REGEX: OnceLock<Regex> = OnceLock::new();
+
         // Parse functions
-        let fn_regex = Regex::new(r"func\s+(?:\([^)]+\)\s+)?(\w+)").unwrap();
+        let fn_regex = FN_REGEX.get_or_init(|| Regex::new(r"func\s+(?:\([^)]+\)\s+)?(\w+)").unwrap());
         for (i, line) in content.lines().enumerate() {
             if let Some(cap) = fn_regex.captures(line) {
                 let is_public = cap[1].chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
@@ -852,7 +895,7 @@ impl LanguageParser for GoParser {
         }
 
         // Parse types (structs, interfaces)
-        let type_regex = Regex::new(r"type\s+(\w+)").unwrap();
+        let type_regex = TYPE_REGEX.get_or_init(|| Regex::new(r"type\s+(\w+)").unwrap());
         for (i, line) in content.lines().enumerate() {
             if let Some(cap) = type_regex.captures(line) {
                 let is_public = cap[1].chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
@@ -878,8 +921,11 @@ impl LanguageParser for GoParser {
     fn parse_imports(&self, content: &str) -> Vec<super::Import> {
         let mut imports = Vec::new();
         
+        static IMPORT_REGEX: OnceLock<Regex> = OnceLock::new();
+        static BLOCK_IMPORT_REGEX: OnceLock<Regex> = OnceLock::new();
+
         // Single import
-        let import_regex = Regex::new(r#"import\s+["`]([^"`]+)["`]"#).unwrap();
+        let import_regex = IMPORT_REGEX.get_or_init(|| Regex::new(r#"import\s+["`]([^"`]+)["`]"#).unwrap());
         for cap in import_regex.captures_iter(content) {
             imports.push(super::Import {
                 source: cap[1].to_string(),
@@ -889,7 +935,7 @@ impl LanguageParser for GoParser {
         }
 
         // Block imports
-        let block_import_regex = Regex::new(r"import\s+\(([^)]+)\)").unwrap();
+        let block_import_regex = BLOCK_IMPORT_REGEX.get_or_init(|| Regex::new(r"import\s+\(([^)]+)\)").unwrap());
         for cap in block_import_regex.captures_iter(content) {
             for line in cap[1].lines() {
                 let trimmed = line.trim();
@@ -1029,34 +1075,37 @@ impl MetricsCollector {
 
     fn calculate_halstead(&self, content: &str) -> HalsteadMetrics {
         // Simplified Halstead metrics calculation
-        let operators_regex = Regex::new(r"[+\-*/%=<>!&|^~]+|&&|\|\||<<|>>|->|=>|\+\+|--").unwrap();
-        let operands_regex = Regex::new(r"\b[a-zA-Z_]\w*\b|\b\d+\b").unwrap();
+        static OPERATORS_REGEX: OnceLock<Regex> = OnceLock::new();
+        static OPERANDS_REGEX: OnceLock<Regex> = OnceLock::new();
+
+        let operators_regex = OPERATORS_REGEX.get_or_init(|| Regex::new(r"[+\-*/%=<>!&|^~]+|&&|\|\||<<|>>|->|=>|\+\+|--").unwrap());
+        let operands_regex = OPERANDS_REGEX.get_or_init(|| Regex::new(r"\b[a-zA-Z_]\w*\b|\b\d+\b").unwrap());
         
         let operators: HashSet<_> = operators_regex.find_iter(content).map(|m| m.as_str()).collect();
         let operands: HashSet<_> = operands_regex.find_iter(content).map(|m| m.as_str()).collect();
         
         let n1 = operators.len() as u32;
         let n2 = operands.len() as u32;
-        let N1 = operators_regex.find_iter(content).count() as u32;
-        let N2 = operands_regex.find_iter(content).count() as u32;
+        let n1_total = operators_regex.find_iter(content).count() as u32;
+        let n2_total = operands_regex.find_iter(content).count() as u32;
         
         let vocabulary = (n1 + n2) as f32;
-        let length = (N1 + N2) as f32;
+        let length = (n1_total + n2_total) as f32;
         let volume = if vocabulary > 0.0 {
             length * vocabulary.log2()
         } else {
             0.0
         };
         let difficulty = if n2 > 0 {
-            (n1 as f32 * N2 as f32) / (2.0 * n2 as f32)
+            (n1 as f32 * n2_total as f32) / (2.0 * n2 as f32)
         } else {
             0.0
         };
         let effort = difficulty * volume;
 
         HalsteadMetrics {
-            operators: N1,
-            operands: N2,
+            operators: n1_total,
+            operands: n2_total,
             unique_operators: n1,
             unique_operands: n2,
             program_length: length,
@@ -1183,4 +1232,5 @@ import * as utils from './utils';
         assert!(metrics.vocabulary_size > 0.0);
         assert!(metrics.volume > 0.0);
     }
+
 }
