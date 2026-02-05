@@ -225,7 +225,36 @@ impl AnthropicGateway {
 #[async_trait]
 impl LlmGateway for AnthropicGateway {
     async fn initialize(&mut self) -> Result<()> {
-        // TODO: Validate API key and connection
+        let request = serde_json::json!({
+            "model": self.model,
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "validate"}]
+        });
+
+        let url = format!("{}/v1/messages", self.base_url);
+        let response = self.client
+            .post(&url)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| Error::ExternalService(format!("Anthropic connection failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+                return Err(Error::Config(format!(
+                    "Anthropic validation failed: Invalid API Key ({})",
+                    status
+                )));
+            }
+            return Err(Error::ExternalService(format!(
+                "Anthropic validation failed: {}",
+                status
+            )));
+        }
+
         Ok(())
     }
 
