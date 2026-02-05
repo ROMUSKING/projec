@@ -469,8 +469,14 @@ impl LlmGateway for OpenRouterGateway {
     }
 
     async fn health_check(&self) -> Result<bool> {
-        // TODO: Check OpenRouter API health
-        Ok(true)
+        let response = self.client
+            .get(format!("{}/auth/key", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await
+            .map_err(|e| Error::ExternalService(format!("OpenRouter health check failed: {}", e)))?;
+
+        Ok(response.status().is_success())
     }
 }
 
