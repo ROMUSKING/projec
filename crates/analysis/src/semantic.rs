@@ -8,7 +8,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::fs;
 use tracing::{debug, warn};
 
@@ -460,7 +460,9 @@ impl LanguageParser for RustParser {
         let mut symbols = Vec::new();
         
         // Parse functions
-        let fn_regex = Regex::new(r"(?:(pub)\s+)?fn\s+(\w+)").unwrap();
+        static FN_REGEX: OnceLock<Regex> = OnceLock::new();
+        let fn_regex = FN_REGEX.get_or_init(|| Regex::new(r"(?:(pub)\s+)?fn\s+(\w+)").unwrap());
+
         for (i, line) in content.lines().enumerate() {
             if let Some(cap) = fn_regex.captures(line) {
                 symbols.push(ParsedSymbol {
@@ -474,7 +476,9 @@ impl LanguageParser for RustParser {
         }
 
         // Parse structs
-        let struct_regex = Regex::new(r"(?:(pub)\s+)?struct\s+(\w+)").unwrap();
+        static STRUCT_REGEX: OnceLock<Regex> = OnceLock::new();
+        let struct_regex = STRUCT_REGEX.get_or_init(|| Regex::new(r"(?:(pub)\s+)?struct\s+(\w+)").unwrap());
+
         for (i, line) in content.lines().enumerate() {
             if let Some(cap) = struct_regex.captures(line) {
                 symbols.push(ParsedSymbol {
@@ -488,7 +492,9 @@ impl LanguageParser for RustParser {
         }
 
         // Parse enums
-        let enum_regex = Regex::new(r"(?:(pub)\s+)?enum\s+(\w+)").unwrap();
+        static ENUM_REGEX: OnceLock<Regex> = OnceLock::new();
+        let enum_regex = ENUM_REGEX.get_or_init(|| Regex::new(r"(?:(pub)\s+)?enum\s+(\w+)").unwrap());
+
         for (i, line) in content.lines().enumerate() {
             if let Some(cap) = enum_regex.captures(line) {
                 symbols.push(ParsedSymbol {
@@ -502,7 +508,9 @@ impl LanguageParser for RustParser {
         }
 
         // Parse traits
-        let trait_regex = Regex::new(r"(?:(pub)\s+)?trait\s+(\w+)").unwrap();
+        static TRAIT_REGEX: OnceLock<Regex> = OnceLock::new();
+        let trait_regex = TRAIT_REGEX.get_or_init(|| Regex::new(r"(?:(pub)\s+)?trait\s+(\w+)").unwrap());
+
         for (i, line) in content.lines().enumerate() {
             if let Some(cap) = trait_regex.captures(line) {
                 symbols.push(ParsedSymbol {
