@@ -280,7 +280,17 @@ impl OllamaGateway {
 #[async_trait]
 impl LlmGateway for OllamaGateway {
     async fn initialize(&mut self) -> Result<()> {
-        // TODO: Validate connection to Ollama
+        let url = format!("{}/api/tags", self.base_url);
+        let response = self.client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| Error::ExternalService(format!("Ollama connection failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(Error::ExternalService(format!("Ollama returned error: {}", response.status())));
+        }
+
         Ok(())
     }
 
@@ -305,8 +315,11 @@ impl LlmGateway for OllamaGateway {
     }
 
     async fn health_check(&self) -> Result<bool> {
-        // TODO: Check Ollama health
-        Ok(true)
+        let url = format!("{}/api/tags", self.base_url);
+        match self.client.get(&url).send().await {
+            Ok(resp) => Ok(resp.status().is_success()),
+            Err(_) => Ok(false),
+        }
     }
 }
 
