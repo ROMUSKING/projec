@@ -337,7 +337,11 @@ impl OpenRouterGateway {
 #[async_trait]
 impl LlmGateway for OpenRouterGateway {
     async fn initialize(&mut self) -> Result<()> {
-        // TODO: Validate API key and connection
+        if !self.health_check().await? {
+            return Err(Error::Config(
+                "OpenRouter validation failed: Check your API key and connection".to_string(),
+            ));
+        }
         Ok(())
     }
 
@@ -432,8 +436,13 @@ impl LlmGateway for OpenRouterGateway {
     }
 
     async fn health_check(&self) -> Result<bool> {
-        // TODO: Check OpenRouter API health
-        Ok(true)
+        match self.list_models().await {
+            Ok(_) => Ok(true),
+            Err(e) => {
+                tracing::warn!("OpenRouter health check failed: {}", e);
+                Ok(false)
+            }
+        }
     }
 }
 
@@ -675,5 +684,71 @@ impl GatewayFactory {
 impl Default for GatewayFactory {
     fn default() -> Self {
         Self::new()
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::net::TcpListener;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn test_openrouter_initialize_success() {
+        // Setup mock server
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let base_url = format!("http://127.0.0.1:{}", port);
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0; 1024];
+            let n = socket.read(&mut buf).await.unwrap();
+            let request = String::from_utf8_lossy(&buf[..n]);
+
+            // Basic validation of the request
+            if request.contains("GET /models") && request.contains("Bearer test-key") {
+                let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"data\": [{\"id\": \"test-model\", \"name\": \"Test Model\"}]}";
+                socket.write_all(response.as_bytes()).await.unwrap();
+            } else {
+                let response = "HTTP/1.1 400 Bad Request\r\n\r\n";
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+
+        let client = reqwest::Client::new();
+        let mut gateway = OpenRouterGateway::new("test-key".to_string(), "test-model".to_string(), client)
+            .with_base_url(base_url);
+
+        let result = gateway.initialize().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_openrouter_initialize_failure() {
+        // Setup mock server
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let base_url = format!("http://127.0.0.1:{}", port);
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0; 1024];
+            let _ = socket.read(&mut buf).await.unwrap();
+
+            // Simulate unauthorized
+            let response = "HTTP/1.1 401 Unauthorized\r\n\r\n";
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let mut gateway = OpenRouterGateway::new("test-key".to_string(), "test-model".to_string(), client)
+            .with_base_url(base_url);
+
+        let result = gateway.initialize().await;
+        assert!(result.is_err());
+        match result {
+            Err(Error::Config(msg)) => assert!(msg.contains("OpenRouter validation failed")),
+            _ => panic!("Expected Config error"),
+        }
     }
 }
