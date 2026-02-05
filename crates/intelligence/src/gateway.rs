@@ -100,7 +100,7 @@ impl OpenAiGateway {
 #[async_trait]
 impl LlmGateway for OpenAiGateway {
     async fn initialize(&mut self) -> Result<()> {
-        // TODO: Validate API key and connection
+        self.list_models().await?;
         Ok(())
     }
 
@@ -193,8 +193,10 @@ impl LlmGateway for OpenAiGateway {
     }
 
     async fn health_check(&self) -> Result<bool> {
-        // TODO: Check OpenAI API health
-        Ok(true)
+        match self.list_models().await {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
     }
 }
 
@@ -675,5 +677,90 @@ impl GatewayFactory {
 impl Default for GatewayFactory {
     fn default() -> Self {
         Self::new()
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::net::TcpListener;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn spawn_mock_server(status: u16, body: String) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0; 1024];
+            let _ = socket.read(&mut buf).await.unwrap();
+
+            let reason = if status == 200 { "OK" } else { "Unauthorized" };
+            let response = format!(
+                "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                status, reason, body.len(), body
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        format!("http://127.0.0.1:{}", port)
+    }
+
+    #[tokio::test]
+    async fn test_openai_initialize_success() {
+        let mock_response = serde_json::json!({
+            "data": [
+                {
+                    "id": "gpt-4",
+                    "object": "model",
+                    "created": 1687882411,
+                    "owned_by": "openai"
+                }
+            ]
+        }).to_string();
+
+        let base_url = spawn_mock_server(200, mock_response).await;
+
+        let client = reqwest::Client::new();
+        let mut gateway = OpenAiGateway::new("test-key".to_string(), "gpt-4".to_string(), client)
+            .with_base_url(base_url);
+
+        let result = gateway.initialize().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_openai_initialize_failure() {
+        let base_url = spawn_mock_server(401, "{}".to_string()).await;
+
+        let client = reqwest::Client::new();
+        let mut gateway = OpenAiGateway::new("test-key".to_string(), "gpt-4".to_string(), client)
+            .with_base_url(base_url);
+
+        let result = gateway.initialize().await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_openai_health_check() {
+         let mock_response = serde_json::json!({
+            "data": [
+                {
+                    "id": "gpt-4",
+                    "object": "model",
+                    "created": 1687882411,
+                    "owned_by": "openai"
+                }
+            ]
+        }).to_string();
+
+        let base_url = spawn_mock_server(200, mock_response).await;
+
+        let client = reqwest::Client::new();
+        let gateway = OpenAiGateway::new("test-key".to_string(), "gpt-4".to_string(), client)
+            .with_base_url(base_url);
+
+        let result = gateway.health_check().await;
+        assert!(result.is_ok());
+        assert!(result.unwrap());
     }
 }
