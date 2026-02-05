@@ -85,16 +85,21 @@ impl ToolLibrary {
     pub async fn find_similar(&self, query: &ToolEmbedding, limit: usize) -> Result<Vec<(String, f32)>> {
         let embeddings = self.embeddings.read().await;
         
-        let mut similarities: Vec<(String, f32)> = embeddings
+        let mut similarities: Vec<(&String, f32)> = embeddings
             .values()
-            .map(|emb| (emb.tool_name.clone(), query.similarity(emb)))
+            .map(|emb| (&emb.tool_name, query.similarity(emb)))
             .collect();
 
         // Sort by similarity (descending)
-        similarities.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        similarities.truncate(limit);
+        similarities.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        Ok(similarities)
+        let result = similarities
+            .into_iter()
+            .take(limit)
+            .map(|(name, score)| (name.clone(), score))
+            .collect();
+
+        Ok(result)
     }
 
     /// Search tools by capability
