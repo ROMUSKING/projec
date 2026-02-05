@@ -586,8 +586,16 @@ impl LlmGateway for ArceeGateway {
     }
 
     async fn health_check(&self) -> Result<bool> {
-        // TODO: Check Arcee API health
-        Ok(true)
+        let response = self.client
+            .get(format!("{}/models", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await;
+
+        match response {
+            Ok(resp) => Ok(resp.status().is_success()),
+            Err(_) => Ok(false),
+        }
     }
 }
 
@@ -704,5 +712,79 @@ impl GatewayFactory {
 impl Default for GatewayFactory {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::net::TcpListener;
+    use tokio::io::AsyncWriteExt;
+
+    #[tokio::test]
+    async fn test_arcee_health_check_success() {
+        // Setup a mock server
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let base_url = format!("http://127.0.0.1:{}", port);
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let response = "HTTP/1.1 200 OK\r\n\r\n";
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        let gateway = ArceeGateway::new(
+            "test-key".to_string(),
+            "test-model".to_string(),
+            reqwest::Client::new(),
+        ).with_base_url(base_url);
+
+        let result = gateway.health_check().await;
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_arcee_health_check_failure() {
+        // Setup a mock server that returns 500
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let base_url = format!("http://127.0.0.1:{}", port);
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let response = "HTTP/1.1 500 Internal Server Error\r\n\r\n";
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        let gateway = ArceeGateway::new(
+            "test-key".to_string(),
+            "test-model".to_string(),
+            reqwest::Client::new(),
+        ).with_base_url(base_url);
+
+        let result = gateway.health_check().await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_arcee_health_check_network_error() {
+        // Bind to a port but don't accept connections (or close immediately)
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let base_url = format!("http://127.0.0.1:{}", port);
+        drop(listener); // Port is now closed
+
+        let gateway = ArceeGateway::new(
+            "test-key".to_string(),
+            "test-model".to_string(),
+            reqwest::Client::new(),
+        ).with_base_url(base_url);
+
+        let result = gateway.health_check().await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
     }
 }
