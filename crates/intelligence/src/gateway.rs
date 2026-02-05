@@ -305,8 +305,15 @@ impl LlmGateway for OllamaGateway {
     }
 
     async fn health_check(&self) -> Result<bool> {
-        // TODO: Check Ollama health
-        Ok(true)
+        let response = self.client
+            .get(&self.base_url)
+            .send()
+            .await;
+
+        match response {
+            Ok(resp) => Ok(resp.status().is_success()),
+            Err(_) => Ok(false),
+        }
     }
 }
 
@@ -675,5 +682,51 @@ impl GatewayFactory {
 impl Default for GatewayFactory {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_ollama_health_check() {
+        use tokio::net::TcpListener;
+        use tokio::io::AsyncWriteExt;
+
+        // Start a dummy server
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            // Accept one connection and send 200 OK
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+
+        let client = reqwest::Client::new();
+        let gateway = OllamaGateway::new("model".to_string(), client)
+            .with_base_url(format!("http://127.0.0.1:{}", port));
+
+        // It should pass
+        assert!(gateway.health_check().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_ollama_health_check_failure() {
+        // Pick a port that is likely closed
+        let client = reqwest::Client::new();
+        // A safer bet is to bind a listener then drop it, ensuring the port is free and closed.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let gateway = OllamaGateway::new("model".to_string(), client)
+            .with_base_url(format!("http://127.0.0.1:{}", port));
+
+        // It should fail (return false)
+        assert!(!gateway.health_check().await.unwrap());
     }
 }
