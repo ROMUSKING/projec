@@ -287,8 +287,22 @@ impl LlmGateway for AnthropicGateway {
     }
 
     async fn health_check(&self) -> Result<bool> {
-        // TODO: Check Anthropic API health
-        Ok(true)
+        let request = serde_json::json!({
+            "model": self.model,
+            "messages": [{"role": "user", "content": "Ping"}],
+            "max_tokens": 1
+        });
+
+        let response = self.client
+            .post(format!("{}/v1/messages", self.base_url))
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| Error::ExternalService(format!("Anthropic request failed: {}", e)))?;
+
+        Ok(response.status().is_success())
     }
 }
 
